@@ -319,6 +319,26 @@ function buildStripMeshes(
     transparent: true,
     opacity: 0.55,
   });
+  // Earth/dirt skirt extending from the ribbon down to the ground plane,
+  // tapered outward at the base so the track reads as sitting on hills
+  // rather than floating on stilts. Uses vertex colours (top = full
+  // material colour, base = darkened) to fake ambient occlusion where the
+  // hill meets the ground — gives hills visible 3D depth instead of
+  // reading as flat-shaded slabs.
+  const skirtMat = new THREE.MeshStandardMaterial({
+    color: 0x6b5235,
+    roughness: 0.98,
+    metalness: 0.0,
+    side: THREE.DoubleSide,
+    vertexColors: true,
+  });
+  const SKIRT_TAPER = 0.3; // base spread per unit height (~17° slope)
+  const SKIRT_BASE_DARKEN = 0.35; // vertex colour multiplier at the ground
+  // Centre lane stripe — yellow line painted just above the track top so
+  // it's easy to see where the lane curves over bumps and hills.
+  const stripeMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
+  const STRIPE_WIDTH = 0.35;
+  const STRIPE_RAISE = 0.02;
 
   // Combine all strips into a single trimesh collider — cheaper than one per strip.
   const allPositions: number[] = [];
@@ -402,11 +422,113 @@ function buildStripMeshes(
     if (!skipStartCap) pushCap(xs[0], capPositions, capIndices, /* isStart */ true);
     if (!skipEndCap) pushCap(xs[xs.length - 1], capPositions, capIndices, /* isStart */ false);
 
+    // ---- Earth skirt: from the slab's bottom edges down to the ground ---
+    // Two vertex pairs per cross-section: bl (top) → bl_ground (taper-out)
+    // for the LEFT wall, br (top) → br_ground for the RIGHT wall. Plus an
+    // end-cap quad at each strip end (except seam ends on closed loops).
+    // Top vertices get colour (1,1,1); base vertices get (k,k,k) where k =
+    // SKIRT_BASE_DARKEN so the material colour is darkened at the ground —
+    // gives a fake AO gradient that reads as 3D depth on hills.
+    const leftSkirtPos: number[] = [];
+    const leftSkirtColors: number[] = [];
+    const leftSkirtIdx: number[] = [];
+    const rightSkirtPos: number[] = [];
+    const rightSkirtColors: number[] = [];
+    const rightSkirtIdx: number[] = [];
+    const k = SKIRT_BASE_DARKEN;
+
+    type GroundPoint = { lx: number; lz: number; rx: number; rz: number };
+    const groundPoints: GroundPoint[] = [];
+
+    for (const cs of xs) {
+      // Outward-perpendicular direction in xz (right axis projected to ground).
+      const dx = cs.tr.x - cs.tl.x;
+      const dz = cs.tr.z - cs.tl.z;
+      const len = Math.sqrt(dx * dx + dz * dz);
+      const rx = len > 1e-6 ? dx / len : 1;
+      const rz = len > 1e-6 ? dz / len : 0;
+
+      const lHeight = Math.max(0, cs.bl.y);
+      const rHeight = Math.max(0, cs.br.y);
+      const lgx = cs.bl.x - rx * SKIRT_TAPER * lHeight;
+      const lgz = cs.bl.z - rz * SKIRT_TAPER * lHeight;
+      const rgx = cs.br.x + rx * SKIRT_TAPER * rHeight;
+      const rgz = cs.br.z + rz * SKIRT_TAPER * rHeight;
+      groundPoints.push({ lx: lgx, lz: lgz, rx: rgx, rz: rgz });
+
+      leftSkirtPos.push(cs.bl.x, cs.bl.y, cs.bl.z, lgx, 0, lgz);
+      leftSkirtColors.push(1, 1, 1, k, k, k);
+      rightSkirtPos.push(cs.br.x, cs.br.y, cs.br.z, rgx, 0, rgz);
+      rightSkirtColors.push(1, 1, 1, k, k, k);
+    }
+    for (let i = 0; i < xs.length - 1; i++) {
+      const a = i * 2;
+      const b = a + 1;
+      const c = a + 2;
+      const d = a + 3;
+      leftSkirtIdx.push(a, b, d, a, d, c);
+      rightSkirtIdx.push(a, d, b, a, c, d);
+    }
+
+    // Skirt end caps at the non-seam ends of each strip.
+    const skirtCapPos: number[] = [];
+    const skirtCapColors: number[] = [];
+    const skirtCapIdx: number[] = [];
+    if (!skipStartCap) {
+      const cs = xs[0];
+      const gp = groundPoints[0];
+      const base = skirtCapPos.length / 3;
+      skirtCapPos.push(cs.bl.x, cs.bl.y, cs.bl.z);
+      skirtCapPos.push(cs.br.x, cs.br.y, cs.br.z);
+      skirtCapPos.push(gp.rx, 0, gp.rz);
+      skirtCapPos.push(gp.lx, 0, gp.lz);
+      skirtCapColors.push(1, 1, 1, 1, 1, 1, k, k, k, k, k, k);
+      skirtCapIdx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    if (!skipEndCap) {
+      const cs = xs[xs.length - 1];
+      const gp = groundPoints[groundPoints.length - 1];
+      const base = skirtCapPos.length / 3;
+      skirtCapPos.push(cs.bl.x, cs.bl.y, cs.bl.z);
+      skirtCapPos.push(cs.br.x, cs.br.y, cs.br.z);
+      skirtCapPos.push(gp.rx, 0, gp.rz);
+      skirtCapPos.push(gp.lx, 0, gp.lz);
+      skirtCapColors.push(1, 1, 1, 1, 1, 1, k, k, k, k, k, k);
+      skirtCapIdx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    }
+
+    // ---- Centre lane stripe (painted on the track top) ------------------
+    const stripePos: number[] = [];
+    const stripeIdx: number[] = [];
+    for (const cs of xs) {
+      const cx = (cs.tl.x + cs.tr.x) / 2;
+      const cy = (cs.tl.y + cs.tr.y) / 2 + STRIPE_RAISE;
+      const cz = (cs.tl.z + cs.tr.z) / 2;
+      const dx = cs.tr.x - cs.tl.x;
+      const dz = cs.tr.z - cs.tl.z;
+      const len = Math.sqrt(dx * dx + dz * dz);
+      const rx = len > 1e-6 ? dx / len : 1;
+      const rz = len > 1e-6 ? dz / len : 0;
+      stripePos.push(cx - rx * (STRIPE_WIDTH / 2), cy, cz - rz * (STRIPE_WIDTH / 2));
+      stripePos.push(cx + rx * (STRIPE_WIDTH / 2), cy, cz + rz * (STRIPE_WIDTH / 2));
+    }
+    for (let i = 0; i < xs.length - 1; i++) {
+      const a = i * 2;
+      const b = a + 1;
+      const c = a + 2;
+      const d = a + 3;
+      stripeIdx.push(a, c, d, a, d, b);
+    }
+
     // ---- Three.js meshes -------------------------------------------------
     addStripMesh(scene, topPositions, topIndices, topMat, true);
     addStripMesh(scene, bottomPositions, bottomIndices, sideMat, false);
     addStripMesh(scene, sidePositions, sideIndices, sideMat, false);
     addStripMesh(scene, capPositions, capIndices, sideMat, false);
+    addColoredStripMesh(scene, leftSkirtPos, leftSkirtColors, leftSkirtIdx, skirtMat);
+    addColoredStripMesh(scene, rightSkirtPos, rightSkirtColors, rightSkirtIdx, skirtMat);
+    addColoredStripMesh(scene, skirtCapPos, skirtCapColors, skirtCapIdx, skirtMat);
+    addStripMesh(scene, stripePos, stripeIdx, stripeMat, false);
 
     // Edge highlights along the top corners.
     addEdgeLine(scene, xs.map((cs) => cs.tl), edgeMat);
@@ -460,7 +582,7 @@ function addStripMesh(
   scene: THREE.Scene,
   positions: number[],
   indices: number[],
-  mat: THREE.MeshStandardMaterial,
+  mat: THREE.Material,
   receiveShadow: boolean,
 ): void {
   if (positions.length === 0 || indices.length === 0) return;
@@ -471,6 +593,25 @@ function addStripMesh(
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = receiveShadow;
+  scene.add(mesh);
+}
+
+function addColoredStripMesh(
+  scene: THREE.Scene,
+  positions: number[],
+  colors: number[],
+  indices: number[],
+  mat: THREE.Material,
+): void {
+  if (positions.length === 0 || indices.length === 0) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   scene.add(mesh);
 }
 

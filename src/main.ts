@@ -7,6 +7,7 @@ import { Car } from './vehicle/Car';
 import { CameraRig } from './camera/CameraRig';
 import { Hud } from './ui/Hud';
 import { EngineSound } from './audio/EngineSound';
+import { Sfx } from './audio/Sfx';
 import { buildTrack } from './track/TrackBuilder';
 import { TRACKS, trackByDevIndex } from './track/tracks';
 import { Race } from './race/Race';
@@ -14,42 +15,71 @@ import { CrashSystem } from './race/CrashSystem';
 import { ReplayRecorder } from './replay/ReplayRecorder';
 import { ReplayPlayer } from './replay/ReplayPlayer';
 import { ReplayCamera } from './replay/ReplayCamera';
+import { Menus, loadTransmission } from './ui/Menus';
 
 const FIXED_DT = 1 / 60;
-/** Seconds of buffer to play back on a crash. */
 const CRASH_REPLAY_SEC = 3.0;
-/** Airborne duration above which a landing triggers a highlight replay. */
 const HIGHLIGHT_MIN_AIRTIME_SEC = 1.2;
-/** Padding around the airborne stretch when slicing the highlight replay. */
 const HIGHLIGHT_PAD_SEC = 0.6;
+
+function gotoMenu(): void {
+  const url = new URL(location.href);
+  url.search = '';
+  location.assign(url.toString());
+}
+function gotoTracks(): void {
+  const url = new URL(location.href);
+  url.search = '?screen=tracks';
+  location.assign(url.toString());
+}
+function gotoRetry(): void {
+  location.reload();
+}
 
 async function main(): Promise<void> {
   const container = document.getElementById('app');
   if (!container) throw new Error('Missing #app in index.html');
 
+  const params = new URLSearchParams(location.search);
+  const screen = params.get('screen');
+  const trackParam = params.get('track');
+
+  // Screen routing: no ?track param → show menu/track-select screen.
+  if (!trackParam) {
+    new Menus(document.body, screen === 'tracks' ? 'tracks' : 'menu');
+    return;
+  }
+
+  // --- Otherwise: build the game ----------------------------------------
+  const trackIdx = Math.max(1, Math.min(TRACKS.length, parseInt(trackParam, 10) || 1)) - 1;
+  const trackDef = trackByDevIndex(trackIdx);
+  const transmission = params.get('trans') === 'manual' ? 'manual' : loadTransmission();
+
   const engine = new Engine(container);
-  const physics = await PhysicsWorld.create(); // Rapier WASM init
+  const physics = await PhysicsWorld.create();
   const input = new Input();
 
   buildScene(engine.scene, physics.world);
-
-  // M8 dev switcher: ?track=1|2|3 (defaults to 1). M9 will replace this
-  // with a real menu screen.
-  const trackParam = new URLSearchParams(location.search).get('track');
-  const trackIdx = trackParam ? Math.max(1, Math.min(TRACKS.length, parseInt(trackParam, 10) || 1)) - 1 : 0;
-  const trackDef = trackByDevIndex(trackIdx);
   const track = buildTrack(engine.scene, physics.world, trackDef);
   document.title = `STUNTLINE — ${trackDef.name}`;
 
   const car = new Car(engine.scene, physics.world);
+  car.drivetrain.setMode(transmission);
 
   const camera = new CameraRig();
   engine.setCamera(camera.camera);
 
   const hud = new Hud(document.body);
+  hud.setResultCallbacks({ onRetry: gotoRetry, onTrackSelect: gotoTracks, onMenu: gotoMenu });
+
   const engineSound = new EngineSound();
+  const sfx = new Sfx();
 
   const race = new Race(trackDef, track, car, engine.scene);
+  race.onCountdownTick = (phase) => {
+    if (phase === 'GO') sfx.longBeep();
+    else if (phase !== null) sfx.shortBeep();
+  };
   race.start();
 
   // --- Replay plumbing -----------------------------------------------------
@@ -58,7 +88,6 @@ async function main(): Promise<void> {
   const replayCamera = new ReplayCamera();
   const tmpReplayPos = new THREE.Vector3();
 
-  /** Pause physics + race; play `seconds` of buffer; on completion run `after`. */
   const triggerReplay = (
     seconds: number,
     kind: 'crash' | 'highlight',
@@ -76,15 +105,15 @@ async function main(): Promise<void> {
     replayPlayer.play(frames, kind, () => {
       hud.setReplayActive(false);
       engine.setCamera(camera.camera);
-      recorder.clear(); // start fresh after the replay
+      recorder.clear();
       race.resumeTimer();
       after();
     });
   };
 
-  // CrashSystem fires onCrash → trigger replay → on completion, recover.
   const crashSystem = new CrashSystem(car, race, track.minY, () => {
     car.setCrashed(true);
+    sfx.crashThud();
     triggerReplay(CRASH_REPLAY_SEC, 'crash', () => {
       car.setCrashed(false);
       race.resetToLastCheckpoint();
@@ -92,13 +121,13 @@ async function main(): Promise<void> {
     });
   });
 
-  // Airtime tracker for highlight replays.
   let airtimeSec = 0;
   let wasAirborne = false;
 
   // --- Audio start gesture -------------------------------------------------
   const startAudioOnce = (): void => {
     engineSound.start();
+    sfx.start();
     window.removeEventListener('keydown', startAudioOnce);
     window.removeEventListener('pointerdown', startAudioOnce);
   };
@@ -110,9 +139,13 @@ async function main(): Promise<void> {
     if (!replayPlayer.active) camera.toggleView();
   });
   input.onPress('KeyR', () => {
-    if (replayPlayer.active) return; // ignore during replay
+    if (replayPlayer.active) return;
     if (race.state === 'racing') race.resetToLastCheckpoint();
-    else race.start();
+    else if (race.state === 'finished' || race.state === 'timeup') gotoRetry();
+  });
+  input.onPress('Escape', () => {
+    if (race.state === 'finished' || race.state === 'timeup') gotoMenu();
+    else gotoTracks();
   });
   input.onPress('KeyT', () => car.drivetrain.toggleMode());
   input.onPress('KeyE', () => car.drivetrain.shiftUp());
@@ -120,7 +153,7 @@ async function main(): Promise<void> {
   input.onPress('KeyM', () => engineSound.toggleMute());
   input.onPress('Space', () => replayPlayer.skip());
 
-  // M8 dev: keys 1/2/3 switch tracks (reload with ?track=N).
+  // Quick-switch tracks during a session.
   const gotoTrack = (n: number): void => {
     const url = new URL(location.href);
     url.searchParams.set('track', String(n));
@@ -130,7 +163,6 @@ async function main(): Promise<void> {
   input.onPress('Digit2', () => gotoTrack(2));
   input.onPress('Digit3', () => gotoTrack(3));
 
-  // Throttle estimate for audio + recorder.
   const currentThrottle = (): number => {
     const accel = input.isDown('ArrowUp', 'KeyW');
     const brake = input.isDown('ArrowDown', 'KeyS');
@@ -141,14 +173,23 @@ async function main(): Promise<void> {
   };
 
   console.log(
-    `[STUNTLINE] Loaded "${trackDef.name}" (${trackDef.difficulty}) — ${track.checkpoints.length} checkpoints, minY = ${track.minY.toFixed(2)}. Press 1/2/3 to switch tracks.`,
+    `[STUNTLINE] Loaded "${trackDef.name}" (${trackDef.difficulty}, ${transmission}) — ${track.checkpoints.length} checkpoints.`,
   );
+
+  // Track checkpoint count for chime SFX.
+  let lastPassedCount = 0;
 
   engine.start(
     FIXED_DT,
-    // --- fixed physics step (suspended during replay) ----------------------
+    // --- fixed physics step ---------------------------------------------
     (dt) => {
       if (replayPlayer.active) return;
+
+      // During countdown the world is frozen — no input, no physics step.
+      if (race.isCountdown) {
+        race.update(dt);
+        return;
+      }
 
       car.update(dt, input);
       physics.step();
@@ -157,13 +198,18 @@ async function main(): Promise<void> {
       race.update(dt);
       crashSystem.update(dt);
 
+      // Checkpoint chime on each gate pass.
+      if (race.checkpoints.passed !== lastPassedCount) {
+        if (race.checkpoints.passed > lastPassedCount) sfx.chime();
+        lastPassedCount = race.checkpoints.passed;
+      }
+
       // Airtime → highlight replay
       if (race.state === 'racing' && crashSystem.state === 'normal') {
         if (car.airborne) {
           airtimeSec += dt;
           wasAirborne = true;
         } else if (wasAirborne) {
-          // Just landed.
           const flight = airtimeSec;
           airtimeSec = 0;
           wasAirborne = false;
@@ -176,7 +222,7 @@ async function main(): Promise<void> {
         wasAirborne = false;
       }
     },
-    // --- render -----------------------------------------------------------
+    // --- render ----------------------------------------------------------
     (alpha, frameDt) => {
       if (replayPlayer.active) {
         replayPlayer.update(frameDt);

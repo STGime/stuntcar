@@ -36,7 +36,7 @@ interface HudState {
 }
 
 export interface HudRaceState {
-  state: 'racing' | 'timeup' | 'finished';
+  state: 'countdown' | 'racing' | 'timeup' | 'finished';
   remainingSec: number;
   elapsedSec: number;
   passed: number;
@@ -45,6 +45,13 @@ export interface HudRaceState {
   finishTimeSec: number | null;
   newBest: boolean;
   wrecked: boolean;
+  countdownPhase: 3 | 2 | 1 | 'GO' | null;
+}
+
+export interface HudCallbacks {
+  onRetry: () => void;
+  onTrackSelect: () => void;
+  onMenu: () => void;
 }
 
 /**
@@ -68,6 +75,10 @@ export class Hud {
   private readonly cpEl: HTMLElement;
   private readonly wreckEl: HTMLElement;
   private readonly replayEl: HTMLElement;
+  private readonly countdownEl: HTMLElement;
+  private readonly resultBtnRetry: HTMLButtonElement;
+  private readonly resultBtnTracks: HTMLButtonElement;
+  private readonly resultBtnMenu: HTMLButtonElement;
 
   // Result modal (centered when shown).
   private readonly modal: HTMLElement;
@@ -132,10 +143,38 @@ export class Hud {
     this.modalSub.className = 'race-modal-sub';
     card.appendChild(this.modalSub);
 
+    const btnRow = document.createElement('div');
+    btnRow.className = 'race-modal-btns';
+    card.appendChild(btnRow);
+
+    this.resultBtnRetry = document.createElement('button');
+    this.resultBtnRetry.className = 'race-modal-btn primary';
+    this.resultBtnRetry.textContent = 'Retry';
+    this.resultBtnRetry.style.pointerEvents = 'auto';
+    btnRow.appendChild(this.resultBtnRetry);
+
+    this.resultBtnTracks = document.createElement('button');
+    this.resultBtnTracks.className = 'race-modal-btn';
+    this.resultBtnTracks.textContent = 'Tracks';
+    this.resultBtnTracks.style.pointerEvents = 'auto';
+    btnRow.appendChild(this.resultBtnTracks);
+
+    this.resultBtnMenu = document.createElement('button');
+    this.resultBtnMenu.className = 'race-modal-btn';
+    this.resultBtnMenu.textContent = 'Menu';
+    this.resultBtnMenu.style.pointerEvents = 'auto';
+    btnRow.appendChild(this.resultBtnMenu);
+
     const hint = document.createElement('div');
     hint.className = 'race-modal-hint';
-    hint.textContent = 'Press R to retry';
+    hint.textContent = 'R retry · Esc menu';
     card.appendChild(hint);
+
+    // ── Countdown overlay (3-2-1-GO) ────────────────────────────────────
+    this.countdownEl = document.createElement('div');
+    this.countdownEl.id = 'countdown-overlay';
+    this.countdownEl.style.display = 'none';
+    container.appendChild(this.countdownEl);
 
     const gauges = document.createElement('div');
     gauges.className = 'hud-gauges';
@@ -194,11 +233,27 @@ export class Hud {
     this.replayEl.style.display = active ? '' : 'none';
   }
 
+  setResultCallbacks(cb: HudCallbacks): void {
+    this.resultBtnRetry.onclick = cb.onRetry;
+    this.resultBtnTracks.onclick = cb.onTrackSelect;
+    this.resultBtnMenu.onclick = cb.onMenu;
+  }
+
   updateRace(r: HudRaceState): void {
     this.timerEl.textContent = formatTime(r.remainingSec);
     this.timerEl.classList.toggle('warn', r.remainingSec < 5 && r.state === 'racing');
     this.cpEl.textContent = `CP ${Math.min(r.passed, r.total)}/${r.total}`;
     this.wreckEl.style.display = r.wrecked ? '' : 'none';
+
+    // Countdown overlay
+    if (r.countdownPhase !== null) {
+      this.countdownEl.style.display = '';
+      const label = String(r.countdownPhase);
+      if (this.countdownEl.textContent !== label) this.countdownEl.textContent = label;
+      this.countdownEl.classList.toggle('go', r.countdownPhase === 'GO');
+    } else {
+      this.countdownEl.style.display = 'none';
+    }
 
     if (r.state === 'racing') {
       this.modal.style.display = 'none';
@@ -607,10 +662,66 @@ function injectStyles(): void {
     .race-modal-sub.best {
       color: #4fff8a;
     }
+    .race-modal-btns {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin: 6px 0 14px;
+    }
+    .race-modal-btn {
+      padding: 10px 22px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #8892a8;
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.08s, border-color 0.08s, color 0.08s;
+    }
+    .race-modal-btn:hover {
+      border-color: #ffd166;
+      color: #ffd166;
+      transform: translateY(-1px);
+    }
+    .race-modal-btn.primary {
+      background: #ffd166;
+      color: #1a2030;
+      border-color: #ffd166;
+    }
+    .race-modal-btn.primary:hover { background: #ffdf8f; }
     .race-modal-hint {
-      font-size: 11px;
+      font-size: 10px;
       letter-spacing: 2px;
       color: #6b7689;
+    }
+
+    #countdown-overlay {
+      position: fixed;
+      top: 38%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 140px;
+      font-weight: 900;
+      color: #ffd166;
+      text-shadow: 0 0 36px rgba(255, 209, 102, 0.55);
+      pointer-events: none;
+      user-select: none;
+      animation: cd-pop 0.9s ease-out;
+      z-index: 9;
+    }
+    #countdown-overlay.go {
+      color: #4fff8a;
+      text-shadow: 0 0 48px rgba(79, 255, 138, 0.65);
+      font-size: 120px;
+    }
+    @keyframes cd-pop {
+      0% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+      30% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+      100% { transform: translate(-50%, -50%) scale(0.92); opacity: 1; }
     }
   `;
   const style = document.createElement('style');

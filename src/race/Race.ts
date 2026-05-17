@@ -5,7 +5,10 @@ import type { BuiltTrack } from '../track/TrackBuilder';
 import type { TrackDef } from '../track/TrackTypes';
 import type { Car } from '../vehicle/Car';
 
-export type RaceState = 'racing' | 'timeup' | 'finished';
+export type RaceState = 'countdown' | 'racing' | 'timeup' | 'finished';
+
+/** What the countdown is currently showing: 3, 2, 1, GO, or null when not in countdown. */
+export type CountdownPhase = 3 | 2 | 1 | 'GO' | null;
 
 export interface RaceSnapshot {
   state: RaceState;
@@ -18,16 +21,26 @@ export interface RaceSnapshot {
   finishTimeSec: number | null;
   /** True if `finishTimeSec` beat the previous best on this track. */
   newBest: boolean;
+  /** Current countdown digit (null when not counting down). */
+  countdownPhase: CountdownPhase;
 }
+
+/** Total countdown duration: 3, 2, 1, GO at 1s each. */
+const COUNTDOWN_PHASE_SEC = 1.0;
+const COUNTDOWN_TOTAL_SEC = COUNTDOWN_PHASE_SEC * 4; // 3, 2, 1, GO
 
 /** Wraps `RaceTimer` + `Checkpoints` for a single track run. Owns run state. */
 export class Race {
-  state: RaceState = 'racing';
+  state: RaceState = 'countdown';
   readonly checkpoints: Checkpoints;
   readonly timer: RaceTimer;
   private finishTimeSec: number | null = null;
   private newBest = false;
   private bestTimeSec: number | null;
+  private countdownElapsed = 0;
+  private lastCountdownPhase: CountdownPhase = null;
+  /** Fired when the countdown digit changes (caller plays beep / GO sfx). */
+  onCountdownTick: (phase: CountdownPhase) => void = () => {};
 
   constructor(
     private readonly def: TrackDef,
@@ -40,20 +53,33 @@ export class Race {
     this.bestTimeSec = loadBestTime(def.id);
   }
 
-  /** Reset and begin a fresh run. */
+  /** Reset and begin a fresh run (in countdown state). */
   start(): void {
     this.timer.reset();
     this.checkpoints.reset();
     this.finishTimeSec = null;
     this.newBest = false;
-    this.state = 'racing';
+    this.state = 'countdown';
+    this.countdownElapsed = 0;
+    this.lastCountdownPhase = null;
 
     this.car.setSpawn(this.track.spawn.position, this.track.spawn.quaternion);
     this.car.resetToSpawn();
+    this.timer.setPaused(true);
+  }
 
-    // SPEC: M9 adds the 3-2-1-GO countdown overlay. For M5 the timer starts
-    // immediately on `start()`.
-    this.timer.setPaused(false);
+  /** True while the countdown is showing — caller should skip physics + input. */
+  get isCountdown(): boolean {
+    return this.state === 'countdown';
+  }
+
+  countdownPhase(): CountdownPhase {
+    if (this.state !== 'countdown') return null;
+    // Phases 3, 2, 1 each take COUNTDOWN_PHASE_SEC, then GO takes another.
+    if (this.countdownElapsed < COUNTDOWN_PHASE_SEC) return 3;
+    if (this.countdownElapsed < COUNTDOWN_PHASE_SEC * 2) return 2;
+    if (this.countdownElapsed < COUNTDOWN_PHASE_SEC * 3) return 1;
+    return 'GO';
   }
 
   /**
@@ -83,6 +109,19 @@ export class Race {
 
   /** Per fixed physics step. */
   update(dt: number): void {
+    if (this.state === 'countdown') {
+      this.countdownElapsed += dt;
+      const phase = this.countdownPhase();
+      if (phase !== this.lastCountdownPhase) {
+        this.lastCountdownPhase = phase;
+        this.onCountdownTick(phase);
+      }
+      if (this.countdownElapsed >= COUNTDOWN_TOTAL_SEC) {
+        this.state = 'racing';
+        this.timer.setPaused(false);
+      }
+      return;
+    }
     if (this.state !== 'racing') return;
 
     this.timer.update(dt);
@@ -119,6 +158,7 @@ export class Race {
       bestTimeSec: this.bestTimeSec,
       finishTimeSec: this.finishTimeSec,
       newBest: this.newBest,
+      countdownPhase: this.countdownPhase(),
     };
   }
 }
