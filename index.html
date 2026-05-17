@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>STUNTLINE — M7 · Skyline Run</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1a2030;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      #app { position: fixed; inset: 0; }
+      canvas { display: block; }
+
+      #overlay {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        padding: 12px 14px;
+        background: rgba(12, 16, 24, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        color: #c7d0e0;
+        font-size: 12px;
+        line-height: 1.55;
+        pointer-events: none;
+        user-select: none;
+      }
+      #overlay b { color: #ffd166; font-weight: 600; }
+
+      #title {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        color: #6b7689;
+        font-size: 12px;
+        letter-spacing: 2px;
+        pointer-events: none;
+        user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="title">STUNTLINE · M8</div>
+    <div id="overlay">
+      <div><b>W</b> / <b>↑</b> accelerate &nbsp; <b>S</b> / <b>↓</b> brake · reverse</div>
+      <div><b>A D</b> / <b>← →</b> steer &nbsp; <b>C</b> camera &nbsp; <b>R</b> reset</div>
+      <div><b>Q</b> / <b>E</b> shift down · up &nbsp; <b>T</b> auto ↔ manual</div>
+      <div><b>1</b> Skyline Run &nbsp; <b>2</b> Loopback &nbsp; <b>3</b> The Gauntlet</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

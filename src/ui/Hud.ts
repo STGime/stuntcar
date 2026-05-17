@@ -1,0 +1,619 @@
+import { CarConfig } from '../vehicle/CarConfig';
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * Range of needle travel for both gauges, in degrees, with 0° pointing
+ * straight down. The needle rotates from -ARC/2 (left limit) to +ARC/2.
+ */
+const GAUGE_ARC_DEG = 240;
+
+interface GaugeOpts {
+  label: string;
+  /** Tick values to draw (numbers). The first/last become the angular limits. */
+  ticks: number[];
+  /** Optional value where the redline band starts (drawn on the arc). */
+  redlineAt?: number;
+  /** How a tick value is rendered (default: integer string). */
+  formatTick?: (v: number) => string;
+}
+
+interface Gauge {
+  needle: SVGElement;
+  digital: SVGTextElement;
+  min: number;
+  max: number;
+  cx: number;
+  cy: number;
+}
+
+interface HudState {
+  rpm: number;
+  speedKmh: number;
+  gear: string;
+  mode: 'A' | 'M';
+  onLimiter: boolean;
+}
+
+export interface HudRaceState {
+  state: 'racing' | 'timeup' | 'finished';
+  remainingSec: number;
+  elapsedSec: number;
+  passed: number;
+  total: number;
+  bestTimeSec: number | null;
+  finishTimeSec: number | null;
+  newBest: boolean;
+  wrecked: boolean;
+}
+
+/**
+ * SVG dashboard: analogue tach + speedo, with a digital readout in the middle
+ * of each gauge, plus a gear letter and transmission-mode badge.
+ *
+ * Mounts itself into the provided container. Call `update()` each rendered
+ * frame with the latest drivetrain state.
+ */
+export class Hud {
+  private readonly root: HTMLElement;
+  private readonly tach: Gauge;
+  private readonly speedo: Gauge;
+  private readonly gearEl: HTMLElement;
+  private readonly modeEl: HTMLElement;
+  private readonly limiterEl: HTMLElement;
+
+  // Race HUD (top-center).
+  private readonly raceBar: HTMLElement;
+  private readonly timerEl: HTMLElement;
+  private readonly cpEl: HTMLElement;
+  private readonly wreckEl: HTMLElement;
+  private readonly replayEl: HTMLElement;
+
+  // Result modal (centered when shown).
+  private readonly modal: HTMLElement;
+  private readonly modalTitle: HTMLElement;
+  private readonly modalTime: HTMLElement;
+  private readonly modalSub: HTMLElement;
+
+  constructor(container: HTMLElement) {
+    this.root = document.createElement('div');
+    this.root.id = 'hud';
+    container.appendChild(this.root);
+    injectStyles();
+
+    // --- Top-center race bar (timer + checkpoint counter) ----------------
+    this.raceBar = document.createElement('div');
+    this.raceBar.id = 'race-bar';
+    container.appendChild(this.raceBar);
+
+    this.timerEl = document.createElement('div');
+    this.timerEl.className = 'race-timer';
+    this.timerEl.textContent = '00.0';
+    this.raceBar.appendChild(this.timerEl);
+
+    this.cpEl = document.createElement('div');
+    this.cpEl.className = 'race-cp';
+    this.cpEl.textContent = 'CP 0/0';
+    this.raceBar.appendChild(this.cpEl);
+
+    this.wreckEl = document.createElement('div');
+    this.wreckEl.className = 'race-wreck';
+    this.wreckEl.textContent = 'WRECKED';
+    this.wreckEl.style.display = 'none';
+    this.raceBar.appendChild(this.wreckEl);
+
+    this.replayEl = document.createElement('div');
+    this.replayEl.id = 'replay-overlay';
+    this.replayEl.style.display = 'none';
+    this.replayEl.innerHTML =
+      '<div class="replay-label">REPLAY</div>' +
+      '<div class="replay-hint">SPACE to skip</div>';
+    container.appendChild(this.replayEl);
+
+    // --- Result modal (hidden until time-up or finish) -------------------
+    this.modal = document.createElement('div');
+    this.modal.id = 'race-modal';
+    this.modal.style.display = 'none';
+    container.appendChild(this.modal);
+
+    const card = document.createElement('div');
+    card.className = 'race-modal-card';
+    this.modal.appendChild(card);
+
+    this.modalTitle = document.createElement('div');
+    this.modalTitle.className = 'race-modal-title';
+    card.appendChild(this.modalTitle);
+
+    this.modalTime = document.createElement('div');
+    this.modalTime.className = 'race-modal-time';
+    card.appendChild(this.modalTime);
+
+    this.modalSub = document.createElement('div');
+    this.modalSub.className = 'race-modal-sub';
+    card.appendChild(this.modalSub);
+
+    const hint = document.createElement('div');
+    hint.className = 'race-modal-hint';
+    hint.textContent = 'Press R to retry';
+    card.appendChild(hint);
+
+    const gauges = document.createElement('div');
+    gauges.className = 'hud-gauges';
+    this.root.appendChild(gauges);
+
+    const redline = CarConfig.redlineRpm;
+    const tachMax = Math.ceil((redline + 500) / 1000) * 1000;
+    this.tach = makeGauge(gauges, {
+      label: 'RPM ×1000',
+      ticks: arange(0, tachMax, 1000),
+      redlineAt: redline,
+      formatTick: (v) => String(v / 1000),
+    });
+
+    const speedMax = 260;
+    this.speedo = makeGauge(gauges, {
+      label: 'km/h',
+      ticks: arange(0, speedMax, 40),
+    });
+
+    const status = document.createElement('div');
+    status.className = 'hud-status';
+    this.root.appendChild(status);
+
+    this.gearEl = document.createElement('div');
+    this.gearEl.className = 'hud-gear';
+    this.gearEl.textContent = '1';
+    status.appendChild(this.gearEl);
+
+    this.modeEl = document.createElement('div');
+    this.modeEl.className = 'hud-mode';
+    this.modeEl.textContent = 'AUTO';
+    status.appendChild(this.modeEl);
+
+    this.limiterEl = document.createElement('div');
+    this.limiterEl.className = 'hud-limiter';
+    this.limiterEl.textContent = 'LIMIT';
+    status.appendChild(this.limiterEl);
+  }
+
+  update(s: HudState): void {
+    setNeedle(this.tach, s.rpm);
+    this.tach.digital.textContent = Math.round(s.rpm).toString();
+
+    setNeedle(this.speedo, s.speedKmh);
+    this.speedo.digital.textContent = Math.round(s.speedKmh).toString();
+
+    if (this.gearEl.textContent !== s.gear) this.gearEl.textContent = s.gear;
+    const modeLabel = s.mode === 'A' ? 'AUTO' : 'MANUAL';
+    if (this.modeEl.textContent !== modeLabel) this.modeEl.textContent = modeLabel;
+
+    this.limiterEl.classList.toggle('on', s.onLimiter);
+  }
+
+  setReplayActive(active: boolean): void {
+    this.replayEl.style.display = active ? '' : 'none';
+  }
+
+  updateRace(r: HudRaceState): void {
+    this.timerEl.textContent = formatTime(r.remainingSec);
+    this.timerEl.classList.toggle('warn', r.remainingSec < 5 && r.state === 'racing');
+    this.cpEl.textContent = `CP ${Math.min(r.passed, r.total)}/${r.total}`;
+    this.wreckEl.style.display = r.wrecked ? '' : 'none';
+
+    if (r.state === 'racing') {
+      this.modal.style.display = 'none';
+      return;
+    }
+
+    this.modal.style.display = 'flex';
+    if (r.state === 'finished') {
+      this.modalTitle.textContent = 'FINISH';
+      this.modalTitle.className = 'race-modal-title finish';
+      this.modalTime.textContent = formatTime(r.finishTimeSec ?? r.elapsedSec);
+      if (r.newBest) {
+        this.modalSub.textContent = 'NEW BEST TIME!';
+        this.modalSub.className = 'race-modal-sub best';
+      } else if (r.bestTimeSec !== null) {
+        this.modalSub.textContent = `Best: ${formatTime(r.bestTimeSec)}`;
+        this.modalSub.className = 'race-modal-sub';
+      } else {
+        this.modalSub.textContent = '';
+        this.modalSub.className = 'race-modal-sub';
+      }
+    } else {
+      // timeup
+      this.modalTitle.textContent = 'TIME UP';
+      this.modalTitle.className = 'race-modal-title timeup';
+      this.modalTime.textContent = '';
+      this.modalSub.textContent =
+        r.bestTimeSec !== null ? `Best: ${formatTime(r.bestTimeSec)}` : '';
+      this.modalSub.className = 'race-modal-sub';
+    }
+  }
+}
+
+function formatTime(seconds: number): string {
+  const s = Math.max(0, seconds);
+  return s.toFixed(1).padStart(4, '0');
+}
+
+function makeGauge(parent: HTMLElement, opts: GaugeOpts): Gauge {
+  const wrap = document.createElement('div');
+  wrap.className = 'hud-gauge';
+  parent.appendChild(wrap);
+
+  const size = 180;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = size / 2 - 12;
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  wrap.appendChild(svg);
+
+  // Outer ring.
+  const ring = document.createElementNS(SVG_NS, 'circle');
+  ring.setAttribute('cx', String(cx));
+  ring.setAttribute('cy', String(cy));
+  ring.setAttribute('r', String(r + 6));
+  ring.setAttribute('class', 'gauge-ring');
+  svg.appendChild(ring);
+
+  const min = opts.ticks[0];
+  const max = opts.ticks[opts.ticks.length - 1];
+
+  // Redline arc (drawn under the ticks).
+  if (opts.redlineAt !== undefined) {
+    const a0 = valueToAngle(opts.redlineAt, min, max);
+    const a1 = valueToAngle(max, min, max);
+    const arc = document.createElementNS(SVG_NS, 'path');
+    arc.setAttribute('d', arcPath(cx, cy, r + 1, a0, a1));
+    arc.setAttribute('class', 'gauge-redline');
+    svg.appendChild(arc);
+  }
+
+  // Ticks + labels.
+  for (const t of opts.ticks) {
+    const a = valueToAngle(t, min, max);
+    const ang = toSvgRad(a);
+    const x1 = cx + Math.cos(ang) * (r - 8);
+    const y1 = cy + Math.sin(ang) * (r - 8);
+    const x2 = cx + Math.cos(ang) * r;
+    const y2 = cy + Math.sin(ang) * r;
+    const tick = document.createElementNS(SVG_NS, 'line');
+    tick.setAttribute('x1', String(x1));
+    tick.setAttribute('y1', String(y1));
+    tick.setAttribute('x2', String(x2));
+    tick.setAttribute('y2', String(y2));
+    tick.setAttribute('class', 'gauge-tick');
+    svg.appendChild(tick);
+
+    const lx = cx + Math.cos(ang) * (r - 22);
+    const ly = cy + Math.sin(ang) * (r - 22);
+    const label = document.createElementNS(SVG_NS, 'text');
+    label.setAttribute('x', String(lx));
+    label.setAttribute('y', String(ly));
+    label.setAttribute('class', 'gauge-label');
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('dominant-baseline', 'middle');
+    label.textContent = (opts.formatTick ?? defaultFormatTick)(t);
+    svg.appendChild(label);
+  }
+
+  // Needle.
+  const needle = document.createElementNS(SVG_NS, 'g');
+  needle.setAttribute('class', 'gauge-needle');
+  needle.setAttribute('transform', `rotate(${valueToAngle(min, min, max)} ${cx} ${cy})`);
+  const needleLine = document.createElementNS(SVG_NS, 'line');
+  needleLine.setAttribute('x1', String(cx));
+  needleLine.setAttribute('y1', String(cy + 12));
+  needleLine.setAttribute('x2', String(cx));
+  needleLine.setAttribute('y2', String(cy - (r - 14)));
+  needle.appendChild(needleLine);
+  const hub = document.createElementNS(SVG_NS, 'circle');
+  hub.setAttribute('cx', String(cx));
+  hub.setAttribute('cy', String(cy));
+  hub.setAttribute('r', '6');
+  hub.setAttribute('class', 'gauge-hub');
+  svg.appendChild(needle);
+  svg.appendChild(hub);
+
+  // Digital readout in the lower half of the gauge.
+  const digital = document.createElementNS(SVG_NS, 'text');
+  digital.setAttribute('x', String(cx));
+  digital.setAttribute('y', String(cy + r - 28));
+  digital.setAttribute('class', 'gauge-digital');
+  digital.setAttribute('text-anchor', 'middle');
+  digital.textContent = '0';
+  svg.appendChild(digital);
+
+  const caption = document.createElementNS(SVG_NS, 'text');
+  caption.setAttribute('x', String(cx));
+  caption.setAttribute('y', String(cy + r - 14));
+  caption.setAttribute('class', 'gauge-caption');
+  caption.setAttribute('text-anchor', 'middle');
+  caption.textContent = opts.label;
+  svg.appendChild(caption);
+
+  return { needle, digital, min, max, cx, cy };
+}
+
+function setNeedle(g: Gauge, value: number): void {
+  const clamped = Math.max(g.min, Math.min(g.max, value));
+  const angle = valueToAngle(clamped, g.min, g.max);
+  g.needle.setAttribute('transform', `rotate(${angle.toFixed(2)} ${g.cx} ${g.cy})`);
+}
+
+/**
+ * Returns the gauge angle for `value`, measured from straight up with
+ * clockwise positive. Range: [-ARC/2, +ARC/2]. Min sits lower-left, max
+ * sits lower-right, midrange points up — standard automotive layout.
+ */
+function valueToAngle(value: number, min: number, max: number): number {
+  const t = (value - min) / (max - min);
+  return -GAUGE_ARC_DEG / 2 + t * GAUGE_ARC_DEG;
+}
+
+/** Convert a "from-top, clockwise" angle (degrees) to SVG math radians. */
+function toSvgRad(angleFromTopDeg: number): number {
+  return (angleFromTopDeg - 90) * (Math.PI / 180);
+}
+
+function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
+  const startA = toSvgRad(a0);
+  const endA = toSvgRad(a1);
+  const x0 = cx + Math.cos(startA) * r;
+  const y0 = cy + Math.sin(startA) * r;
+  const x1 = cx + Math.cos(endA) * r;
+  const y1 = cy + Math.sin(endA) * r;
+  const large = a1 - a0 > 180 ? 1 : 0;
+  return `M ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1}`;
+}
+
+function arange(start: number, end: number, step: number): number[] {
+  const out: number[] = [];
+  for (let v = start; v <= end + 1e-6; v += step) out.push(Math.round(v));
+  return out;
+}
+
+function defaultFormatTick(v: number): string {
+  return String(v);
+}
+
+let stylesInjected = false;
+function injectStyles(): void {
+  if (stylesInjected) return;
+  stylesInjected = true;
+  const css = `
+    #hud {
+      position: fixed;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: flex-end;
+      gap: 14px;
+      pointer-events: none;
+      user-select: none;
+      color: #e8edf6;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    .hud-gauges { display: flex; gap: 12px; }
+    .hud-gauge {
+      background: rgba(12, 16, 24, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 6px;
+    }
+    .gauge-ring {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.08);
+      stroke-width: 2;
+    }
+    .gauge-redline {
+      fill: none;
+      stroke: #ff4f4f;
+      stroke-width: 4;
+      stroke-linecap: round;
+    }
+    .gauge-tick {
+      stroke: rgba(255, 255, 255, 0.55);
+      stroke-width: 2;
+      stroke-linecap: round;
+    }
+    .gauge-label {
+      font-size: 10px;
+      fill: #c7d0e0;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    .gauge-needle line {
+      stroke: #ffd166;
+      stroke-width: 3;
+      stroke-linecap: round;
+      filter: drop-shadow(0 0 4px rgba(255, 209, 102, 0.55));
+    }
+    .gauge-hub {
+      fill: #1a2030;
+      stroke: rgba(255, 255, 255, 0.5);
+      stroke-width: 2;
+    }
+    .gauge-digital {
+      font-size: 18px;
+      font-weight: 700;
+      fill: #4fd1c5;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    .gauge-caption {
+      font-size: 9px;
+      fill: #8892a8;
+      letter-spacing: 1.5px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    .hud-status {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      background: rgba(12, 16, 24, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 10px 14px;
+      min-width: 88px;
+    }
+    .hud-gear {
+      font-size: 42px;
+      font-weight: 800;
+      line-height: 1;
+      color: #ffd166;
+    }
+    .hud-mode {
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: #8892a8;
+    }
+    .hud-limiter {
+      font-size: 10px;
+      letter-spacing: 2px;
+      color: rgba(255, 79, 79, 0.25);
+      transition: color 0.08s linear;
+    }
+    .hud-limiter.on {
+      color: #ff4f4f;
+      text-shadow: 0 0 8px rgba(255, 79, 79, 0.7);
+    }
+
+    #race-bar {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      padding: 10px 20px;
+      background: rgba(12, 16, 24, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      pointer-events: none;
+      user-select: none;
+      color: #e8edf6;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    .race-timer {
+      font-size: 26px;
+      font-weight: 800;
+      color: #4fd1c5;
+      letter-spacing: 1px;
+      min-width: 80px;
+      text-align: center;
+      transition: color 0.1s linear;
+    }
+    .race-timer.warn {
+      color: #ff4f4f;
+      text-shadow: 0 0 10px rgba(255, 79, 79, 0.7);
+    }
+    .race-cp {
+      font-size: 13px;
+      letter-spacing: 2px;
+      color: #8892a8;
+    }
+    .race-wreck {
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      padding: 2px 10px;
+      border-radius: 6px;
+      background: rgba(255, 79, 79, 0.18);
+      color: #ff4f4f;
+      text-shadow: 0 0 8px rgba(255, 79, 79, 0.6);
+    }
+
+    #replay-overlay {
+      position: fixed;
+      left: 50%;
+      top: 26%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      pointer-events: none;
+      user-select: none;
+      color: #e8edf6;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      text-shadow: 0 0 14px rgba(0, 0, 0, 0.75);
+    }
+    .replay-label {
+      font-size: 38px;
+      font-weight: 900;
+      letter-spacing: 10px;
+      color: #ff4f4f;
+      animation: replay-pulse 1.4s infinite ease-in-out;
+    }
+    .replay-hint {
+      font-size: 11px;
+      letter-spacing: 3px;
+      color: #c7d0e0;
+    }
+    @keyframes replay-pulse {
+      0%, 100% { opacity: 0.65; }
+      50% { opacity: 1; text-shadow: 0 0 22px rgba(255, 79, 79, 0.8); }
+    }
+
+    #race-modal {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(8, 11, 18, 0.55);
+      backdrop-filter: blur(3px);
+      pointer-events: none;
+      user-select: none;
+      z-index: 10;
+    }
+    .race-modal-card {
+      padding: 28px 44px;
+      background: rgba(12, 16, 24, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      text-align: center;
+      color: #e8edf6;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      min-width: 260px;
+    }
+    .race-modal-title {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: 4px;
+      margin-bottom: 8px;
+    }
+    .race-modal-title.finish { color: #4fff8a; text-shadow: 0 0 14px rgba(79, 255, 138, 0.45); }
+    .race-modal-title.timeup { color: #ff4f4f; text-shadow: 0 0 14px rgba(255, 79, 79, 0.45); }
+    .race-modal-time {
+      font-size: 42px;
+      font-weight: 800;
+      color: #ffd166;
+      margin-bottom: 6px;
+    }
+    .race-modal-sub {
+      font-size: 13px;
+      letter-spacing: 1.5px;
+      color: #8892a8;
+      margin-bottom: 16px;
+    }
+    .race-modal-sub.best {
+      color: #4fff8a;
+    }
+    .race-modal-hint {
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: #6b7689;
+    }
+  `;
+  const style = document.createElement('style');
+  style.textContent = css;
+  document.head.appendChild(style);
+}

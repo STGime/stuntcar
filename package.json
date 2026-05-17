@@ -1,0 +1,24 @@
+{
+  "name": "stuntline",
+  "private": true,
+  "version": "0.1.0",
+  "description": "STUNTLINE - browser-based 3D stunt racing game (M0-M2 scaffold)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.169.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}
