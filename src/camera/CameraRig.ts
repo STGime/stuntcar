@@ -25,6 +25,13 @@ export class CameraRig {
   private readonly desired = new THREE.Vector3();
   private readonly lookAt = new THREE.Vector3();
 
+  // Trauma-based camera shake (Squirrel Eiserloh's GDC approach).
+  // `trauma` ∈ [0, 1]; per-frame offset = noise · trauma². Trauma decays
+  // linearly so the shake settles in ~1 s after a big hit.
+  private trauma = 0;
+  private shakeTime = 0;
+  private readonly shakeOffset = new THREE.Vector3();
+
   constructor() {
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.1, 800);
     this.camera.position.set(0, 6, -12);
@@ -33,6 +40,11 @@ export class CameraRig {
   toggleView(): void {
     this.mode = this.mode === 'chase' ? 'cockpit' : 'chase';
     this.snapNextUpdate = true;
+  }
+
+  /** Add to the camera's trauma value (caps at 1). Trauma squared = shake amplitude. */
+  addTrauma(amount: number): void {
+    this.trauma = Math.min(1, this.trauma + amount);
   }
 
   /** Call once per rendered frame. `dt` is real frame time in seconds. */
@@ -66,6 +78,22 @@ export class CameraRig {
 
       this.lookAt.copy(carPos).addScaledVector(WORLD_UP, 1.1);
       this.camera.lookAt(this.lookAt);
+
+      // Apply trauma shake. Decay the trauma each frame so big hits fade
+      // within ~1 second. Shake amplitude scales with trauma² so light
+      // taps barely move the camera and big crashes really jolt it.
+      if (this.trauma > 0) {
+        this.shakeTime += dt;
+        const t = this.trauma * this.trauma;
+        const phase = this.shakeTime * 38; // ~6 Hz of jitter
+        this.shakeOffset.set(
+          Math.sin(phase * 1.3) * 0.45 * t,
+          Math.sin(phase * 1.7 + 1.1) * 0.30 * t,
+          Math.sin(phase * 1.1 + 2.4) * 0.45 * t,
+        );
+        this.camera.position.add(this.shakeOffset);
+        this.trauma = Math.max(0, this.trauma - dt * 1.1);
+      }
     } else {
       // Cockpit: rides with the car fully (rolls during loops).
       this.fwd.set(0, 0, 1).applyQuaternion(carQuat);

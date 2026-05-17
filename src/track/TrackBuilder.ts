@@ -33,6 +33,10 @@ export interface BuiltTrack {
   finish: CheckpointMarker;
   /** Lowest Y on the entire ribbon — used to size the kill plane in M6. */
   minY: number;
+  /** Trimesh collider for the whole track — null only if there's no geometry.
+   *  Used by the off-track detector to tell "wheels on track" from "wheels on
+   *  the ambient ground beside it" via a downward raycast. */
+  collider: RAPIER.Collider | null;
 }
 
 /** A ribbon cross-section: four corners in world space (top + bottom × L/R). */
@@ -274,9 +278,9 @@ export function buildTrack(
     }
   }
 
-  buildStripMeshes(scene, world, strips, def.closedLoop ?? false);
+  const collider = buildStripMeshes(scene, world, strips, def.closedLoop ?? false);
 
-  return { spawn, checkpoints, finish, minY };
+  return { spawn, checkpoints, finish, minY, collider };
 }
 
 function maybeRecordCheckpoint(
@@ -303,7 +307,7 @@ function buildStripMeshes(
   world: RAPIER.World,
   strips: CrossSection[][],
   closedLoop: boolean,
-): void {
+): RAPIER.Collider | null {
   const topMat = new THREE.MeshStandardMaterial({
     color: 0x5a6680,
     roughness: 0.7,
@@ -546,10 +550,10 @@ function buildStripMeshes(
   // with the first, so the strip end vertices and start vertices already
   // share the same world positions. The seam looks like a clean continuation.
 
-  if (allPositions.length === 0) return;
+  if (allPositions.length === 0) return null;
 
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  world.createCollider(
+  return world.createCollider(
     RAPIER.ColliderDesc.trimesh(
       new Float32Array(allPositions),
       new Uint32Array(allIndices),

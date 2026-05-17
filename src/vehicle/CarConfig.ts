@@ -47,16 +47,17 @@ export const CarConfig = {
   redlineRpm: 7000,
   /**
    * Engine torque (N·m) sampled across RPM. Linear interpolation between
-   * points. Flat-ish midrange, falloff near redline — typical arcade feel.
+   * points. M10 tuning: slightly punchier midrange so launches feel more
+   * responsive and the car holds speed up hill ramps.
    */
   torqueCurve: [
-    { rpm: 900, nm: 120 },
-    { rpm: 2000, nm: 230 },
-    { rpm: 3500, nm: 310 },
-    { rpm: 4500, nm: 340 },
-    { rpm: 5500, nm: 320 },
-    { rpm: 6500, nm: 260 },
-    { rpm: 7000, nm: 180 },
+    { rpm: 900, nm: 140 },
+    { rpm: 2000, nm: 270 },
+    { rpm: 3500, nm: 360 },
+    { rpm: 4500, nm: 390 },
+    { rpm: 5500, nm: 360 },
+    { rpm: 6500, nm: 280 },
+    { rpm: 7000, nm: 190 },
   ],
   /**
    * Gear ratios. Index 0 = reverse (negative), 1 = 1st, ..., 5 = 5th.

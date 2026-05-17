@@ -21,10 +21,11 @@ export class Engine {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a2030);
-    // Fog kicks in far enough that even the back side of a closed-loop
-    // circuit (~80 m diagonal) reads through clearly.
-    this.scene.fog = new THREE.Fog(0x1a2030, 180, 500);
+    // Warmer late-afternoon sky. Fog matches so distant fade reads as haze
+    // rather than a wall — the circuit's far side blends into the horizon.
+    const skyColor = 0xc8b491;
+    this.scene.background = new THREE.Color(skyColor);
+    this.scene.fog = new THREE.Fog(skyColor, 180, 500);
 
     window.addEventListener('resize', () => this.handleResize());
   }

@@ -4,10 +4,14 @@ import type { Race } from './Race';
 
 /** Buffer below the track's lowest ribbon point before the kill plane fires. */
 const KILL_PLANE_PAD = 8;
-/** chassis_up · world_up below this counts as "heavily inverted" (≳ 107°). */
-const INVERTED_THRESHOLD = -0.3;
-/** Sustained inverted time that triggers a crash. */
-const INVERTED_TRIGGER_SEC = 1.5;
+/** chassis_up · world_up below this counts as "tipped over" — covers being
+ *  on the side (≳ 73°), on the roof corner, or fully inverted. Track banks
+ *  are gentle (≤ 20°), so normal driving never gets near this threshold. */
+const INVERTED_THRESHOLD = 0.3;
+/** Sustained tipped time before triggering a wreck. Short enough that you
+ *  can't sit stranded but long enough to ride out a brief lean in a corner
+ *  or mid-air flip. */
+const INVERTED_TRIGGER_SEC = 1.0;
 
 export type CrashReason = 'killplane' | 'inverted';
 

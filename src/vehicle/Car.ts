@@ -83,34 +83,143 @@ export class Car {
     this.chassisCollider = world.createCollider(colliderDesc, this.body);
 
     // --- Chassis visuals -----------------------------------------------------
+    // Low-poly car silhouette built from primitives: lower body slab + raised
+    // cabin with sloped windshield + front hood + side skirts + spoiler +
+    // head/tail lights. No glTF dependency.
     const group = new THREE.Group();
+    const hx = c.chassisHalfExtents.x; // 0.9
+    const hy = c.chassisHalfExtents.y; // 0.5
+    const hz = c.chassisHalfExtents.z; // 2.0
+    const bodyColor = 0xd8423a;
+    const trim = 0x1a1f28;
+    const glassColor = 0x131820;
 
-    const bodyMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(
-        c.chassisHalfExtents.x * 2,
-        c.chassisHalfExtents.y * 2,
-        c.chassisHalfExtents.z * 2,
-      ),
-      new THREE.MeshStandardMaterial({ color: 0xd8423a, metalness: 0.2, roughness: 0.55 }),
+    const paintMat = new THREE.MeshStandardMaterial({
+      color: bodyColor,
+      metalness: 0.35,
+      roughness: 0.45,
+    });
+    const trimMat = new THREE.MeshStandardMaterial({
+      color: trim,
+      metalness: 0.4,
+      roughness: 0.55,
+    });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: glassColor,
+      metalness: 0.2,
+      roughness: 0.25,
+    });
+
+    // Main body slab (slightly narrower than the collider so the visual
+    // sits inside the physics box). Lower half = darker trim, upper half
+    // = paint colour.
+    const lower = new THREE.Mesh(
+      new THREE.BoxGeometry(hx * 2 - 0.05, hy, hz * 2 - 0.05),
+      trimMat,
     );
-    bodyMesh.castShadow = true;
-    group.add(bodyMesh);
+    lower.position.set(0, -hy / 2, 0);
+    lower.castShadow = true;
+    group.add(lower);
 
+    const upper = new THREE.Mesh(
+      new THREE.BoxGeometry(hx * 2 - 0.1, hy * 0.95, hz * 2 - 0.5),
+      paintMat,
+    );
+    upper.position.set(0, hy / 2, -0.05);
+    upper.castShadow = true;
+    group.add(upper);
+
+    // Hood: a shorter, lower painted block at the front, gives the car a nose.
+    const hood = new THREE.Mesh(
+      new THREE.BoxGeometry(hx * 2 - 0.25, 0.35, hz * 0.55),
+      paintMat,
+    );
+    hood.position.set(0, hy * 0.5 - 0.1, hz * 0.6);
+    hood.castShadow = true;
+    group.add(hood);
+
+    // Cabin (windshield + roof). A sloped windshield is made by rotating the
+    // front face — easiest is two pieces: angled windshield + flat roof.
     const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(1.2, 0.6, 1.8),
-      new THREE.MeshStandardMaterial({ color: 0x20262f, metalness: 0.1, roughness: 0.5 }),
+      new THREE.BoxGeometry(hx * 2 - 0.35, 0.45, hz * 0.85),
+      paintMat,
     );
-    cabin.position.set(0, c.chassisHalfExtents.y + 0.3, -0.2);
+    cabin.position.set(0, hy + 0.5, -0.25);
     cabin.castShadow = true;
     group.add(cabin);
 
-    // Yellow nose marker so "forward" is obvious while testing.
-    const nose = new THREE.Mesh(
-      new THREE.BoxGeometry(1.1, 0.25, 0.3),
-      new THREE.MeshStandardMaterial({ color: 0xffd166 }),
+    // Windshield (dark glass), angled forward.
+    const windshield = new THREE.Mesh(
+      new THREE.BoxGeometry(hx * 2 - 0.4, 0.6, 0.08),
+      glassMat,
     );
-    nose.position.set(0, 0, c.chassisHalfExtents.z - 0.1);
-    group.add(nose);
+    windshield.position.set(0, hy + 0.5, hz * 0.2);
+    windshield.rotation.x = -0.45; // tilt forward
+    windshield.castShadow = true;
+    group.add(windshield);
+
+    // Rear window (lighter tilt back).
+    const rearWindow = new THREE.Mesh(
+      new THREE.BoxGeometry(hx * 2 - 0.4, 0.5, 0.06),
+      glassMat,
+    );
+    rearWindow.position.set(0, hy + 0.5, -hz * 0.65);
+    rearWindow.rotation.x = 0.35;
+    rearWindow.castShadow = true;
+    group.add(rearWindow);
+
+    // Rear spoiler — two thin posts and a wing.
+    const spoilerMat = new THREE.MeshStandardMaterial({
+      color: trim,
+      metalness: 0.5,
+      roughness: 0.4,
+    });
+    const spoilerLeft = new THREE.Mesh(
+      new THREE.BoxGeometry(0.1, 0.32, 0.1),
+      spoilerMat,
+    );
+    spoilerLeft.position.set(-0.55, hy * 0.55 + 0.16, -hz + 0.15);
+    spoilerLeft.castShadow = true;
+    group.add(spoilerLeft);
+    const spoilerRight = spoilerLeft.clone();
+    spoilerRight.position.x = 0.55;
+    group.add(spoilerRight);
+    const wing = new THREE.Mesh(
+      new THREE.BoxGeometry(hx * 2 - 0.1, 0.06, 0.5),
+      spoilerMat,
+    );
+    wing.position.set(0, hy * 0.55 + 0.3, -hz + 0.15);
+    wing.castShadow = true;
+    group.add(wing);
+
+    // Head + tail lights (small emissive squares).
+    const headlightMat = new THREE.MeshStandardMaterial({
+      color: 0xfff3c4,
+      emissive: 0xfff3c4,
+      emissiveIntensity: 0.6,
+      roughness: 0.3,
+    });
+    const taillightMat = new THREE.MeshStandardMaterial({
+      color: 0xff4f4f,
+      emissive: 0xff4f4f,
+      emissiveIntensity: 0.5,
+      roughness: 0.4,
+    });
+    const headlightGeo = new THREE.BoxGeometry(0.45, 0.2, 0.1);
+    const headlightL = new THREE.Mesh(headlightGeo, headlightMat);
+    headlightL.position.set(-hx + 0.35, hy * 0.4, hz - 0.02);
+    group.add(headlightL);
+    const headlightR = headlightL.clone();
+    headlightR.position.x = hx - 0.35;
+    group.add(headlightR);
+
+    const taillightGeo = new THREE.BoxGeometry(0.5, 0.18, 0.08);
+    const taillightL = new THREE.Mesh(taillightGeo, taillightMat);
+    taillightL.position.set(-hx + 0.35, hy * 0.4, -hz + 0.02);
+    group.add(taillightL);
+    const taillightR = taillightL.clone();
+    taillightR.position.x = hx - 0.35;
+    group.add(taillightR);
 
     scene.add(group);
     this.chassisView = new BodyView(this.body, group);

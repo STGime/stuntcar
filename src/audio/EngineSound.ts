@@ -18,6 +18,12 @@ export class EngineSound {
   private oscOctave: OscillatorNode | null = null;
   private filter: BiquadFilterNode | null = null;
   private gain: GainNode | null = null;
+  // Wind layer — pink-ish noise buffer through a lowpass, volume scales
+  // with speed² so it's silent at idle and a clear whoosh above ~60 km/h.
+  private windSource: AudioBufferSourceNode | null = null;
+  private windFilter: BiquadFilterNode | null = null;
+  private windGain: GainNode | null = null;
+  private currentWindGain = 0;
   private started = false;
   private muted = false;
 
@@ -25,6 +31,7 @@ export class EngineSound {
   private targetThrottleGain = 0.0;
   private currentGain = 0.0;
   private limiterPhase = 0;
+  private currentSpeedKmh = 0;
 
   /** Resume / create the audio context. Must be called from a user gesture. */
   start(): void {
@@ -66,6 +73,25 @@ export class EngineSound {
 
     this.oscPrimary.start();
     this.oscOctave.start();
+
+    // ── Wind layer ──────────────────────────────────────────────────────
+    // 2 s buffer of white noise looped. The lowpass shapes it toward a
+    // wind/rumble timbre; gain follows speed (set per frame in update()).
+    const sampleRate = this.ctx.sampleRate;
+    const windBuffer = this.ctx.createBuffer(1, sampleRate * 2, sampleRate);
+    const data = windBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    this.windSource = this.ctx.createBufferSource();
+    this.windSource.buffer = windBuffer;
+    this.windSource.loop = true;
+    this.windFilter = this.ctx.createBiquadFilter();
+    this.windFilter.type = 'lowpass';
+    this.windFilter.frequency.value = 380;
+    this.windFilter.Q.value = 0.4;
+    this.windGain = this.ctx.createGain();
+    this.windGain.gain.value = 0;
+    this.windSource.connect(this.windFilter).connect(this.windGain).connect(this.ctx.destination);
+    this.windSource.start();
   }
 
   setMuted(muted: boolean): void {
@@ -78,8 +104,15 @@ export class EngineSound {
   }
 
   /** Per render frame: push current rpm/throttle into the audio graph. */
-  update(dt: number, rpm: number, throttle: number, onLimiter: boolean): void {
+  update(
+    dt: number,
+    rpm: number,
+    throttle: number,
+    onLimiter: boolean,
+    speedKmh: number = this.currentSpeedKmh,
+  ): void {
     this.currentRpm = rpm;
+    this.currentSpeedKmh = speedKmh;
     // Sound louder under load, quieter while coasting; never dead silent
     // because the idle should always be audible.
     this.targetThrottleGain = 0.18 + throttle * 0.55;
@@ -110,6 +143,17 @@ export class EngineSound {
     const target = this.muted ? 0 : this.targetThrottleGain;
     this.currentGain += (target - this.currentGain) * Math.min(1, dt * 6);
     this.gain.gain.setTargetAtTime(this.currentGain, now, 0.03);
+
+    // Wind layer — silent at idle, audible ~60 km/h, loud past ~150 km/h.
+    if (this.windGain && this.windFilter) {
+      const speedRef = Math.max(0, this.currentSpeedKmh) / 100;
+      const windTarget = this.muted ? 0 : Math.min(0.32, speedRef * speedRef * 0.45);
+      this.currentWindGain += (windTarget - this.currentWindGain) * Math.min(1, dt * 4);
+      this.windGain.gain.setTargetAtTime(this.currentWindGain, now, 0.05);
+      // Cutoff opens a bit with speed for a brighter rush of air.
+      const windCutoff = 300 + Math.min(900, speedRef * 600);
+      this.windFilter.frequency.setTargetAtTime(windCutoff, now, 0.1);
+    }
   }
 
   /** Current RPM the sound is rendering (mostly for debugging). */

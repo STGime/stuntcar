@@ -12,6 +12,7 @@ import { buildTrack } from './track/TrackBuilder';
 import { TRACKS, trackByDevIndex } from './track/tracks';
 import { Race } from './race/Race';
 import { CrashSystem } from './race/CrashSystem';
+import { OffTrackDetector } from './race/OffTrackDetector';
 import { ReplayRecorder } from './replay/ReplayRecorder';
 import { ReplayPlayer } from './replay/ReplayPlayer';
 import { ReplayCamera } from './replay/ReplayCamera';
@@ -114,12 +115,24 @@ async function main(): Promise<void> {
   const crashSystem = new CrashSystem(car, race, track.minY, () => {
     car.setCrashed(true);
     sfx.crashThud();
+    camera.addTrauma(1.0);
     triggerReplay(CRASH_REPLAY_SEC, 'crash', () => {
       car.setCrashed(false);
       race.resetToLastCheckpoint();
       crashSystem.resolve();
     });
   });
+
+  // Off-track 5-second auto-respawn. Suspended while wrecked or replaying.
+  const offTrack = new OffTrackDetector(
+    car,
+    race,
+    physics.world,
+    track.collider,
+    () => crashSystem.state !== 'normal' || replayPlayer.active || race.isCountdown,
+    () => race.resetToLastCheckpoint(),
+  );
+  offTrack.onTick = () => sfx.shortBeep();
 
   let airtimeSec = 0;
   let wasAirborne = false;
@@ -197,6 +210,7 @@ async function main(): Promise<void> {
       recorder.capture(car, currentThrottle());
       race.update(dt);
       crashSystem.update(dt);
+      offTrack.update(dt);
 
       // Checkpoint chime on each gate pass.
       if (race.checkpoints.passed !== lastPassedCount) {
@@ -204,7 +218,7 @@ async function main(): Promise<void> {
         lastPassedCount = race.checkpoints.passed;
       }
 
-      // Airtime → highlight replay
+      // Airtime → highlight replay + landing camera shake
       if (race.state === 'racing' && crashSystem.state === 'normal') {
         if (car.airborne) {
           airtimeSec += dt;
@@ -213,6 +227,8 @@ async function main(): Promise<void> {
           const flight = airtimeSec;
           airtimeSec = 0;
           wasAirborne = false;
+          // Landing shake — scales with airtime so a long flight thumps hard.
+          camera.addTrauma(Math.min(0.7, flight * 0.4));
           if (flight >= HIGHLIGHT_MIN_AIRTIME_SEC) {
             triggerReplay(flight + HIGHLIGHT_PAD_SEC, 'highlight', () => {});
           }
@@ -238,8 +254,8 @@ async function main(): Promise<void> {
           mode: car.drivetrain.mode === 'automatic' ? 'A' : 'M',
           onLimiter: false,
         });
-        hud.updateRace({ ...race.snapshot(), wrecked: false });
-        engineSound.update(frameDt, frame.rpm, frame.throttle, false);
+        hud.updateRace({ ...race.snapshot(), wrecked: false, offTrackSecondsLeft: 0 });
+        engineSound.update(frameDt, frame.rpm, frame.throttle, false, frame.speedKmh);
         return;
       }
 
@@ -254,8 +270,12 @@ async function main(): Promise<void> {
         mode: dt.mode === 'automatic' ? 'A' : 'M',
         onLimiter: dt.onLimiter,
       });
-      hud.updateRace({ ...race.snapshot(), wrecked: crashSystem.state === 'wrecking' });
-      engineSound.update(frameDt, dt.rpm, currentThrottle(), dt.onLimiter);
+      hud.updateRace({
+        ...race.snapshot(),
+        wrecked: crashSystem.state === 'wrecking',
+        offTrackSecondsLeft: offTrack.secondsLeft(),
+      });
+      engineSound.update(frameDt, dt.rpm, currentThrottle(), dt.onLimiter, car.speedKmh);
     },
   );
 }

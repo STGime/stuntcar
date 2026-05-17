@@ -1,114 +1,230 @@
-# STUNTLINE — M0–M2 scaffold
+# STUNTLINE
 
-A browser-based 3D stunt racing game. This repository is the **M0–M2 starter
-scaffold** from the MVP spec — a running Vite + TypeScript + Three.js + Rapier
-project with a fixed-step game loop, physics integration, and a drivable
-raycast-vehicle car. Everything from M3 onward (drivetrain, tracks, checkpoints,
-crashes, replays, audio, menus) is still to be built — see `STUNTLINE_MVP.md`.
+A browser-based 3D stunt racing game. Pure TypeScript, no game engine
+framework. Drive a single car around three closed-loop circuits — banked
+corners, jumps, forward-helix loops, hills and valleys — against a
+countdown timer that's topped up at each checkpoint.
 
-> Working title only. Do not ship as "Stunt Car Racer" or use any of that
-> game's branding, track names, or car names.
+Built incrementally from the spec in [STUNTLINE_MVP.md](./STUNTLINE_MVP.md).
+Milestones M0 through M10 are complete; see [Status](#status) below.
 
-## Requirements
+> Working title. The repository does **not** ship as "Stunt Car Racer" and
+> uses none of that game's branding, track names, vehicle names, or assets.
+> See [public/CREDITS.md](./public/CREDITS.md).
 
-- Node.js 18+ (developed on Node 22)
+---
 
 ## Run it
 
 ```bash
 npm install
-npm run dev      # starts Vite, opens http://localhost:5173
+npm run dev      # Vite serves on http://localhost:5173
 ```
 
 Other scripts:
 
 ```bash
-npm run build    # type-check (tsc --noEmit) + production build into dist/
+npm run build    # tsc --noEmit + Vite production build → dist/
 npm run preview  # serve the production build
 ```
 
-## Controls
+Requirements: **Node 18+** (developed on Node 22).
+
+---
+
+## How to play
+
+Land on the page → **Main Menu** → **Start** → **Track Select** (3 tracks
++ Automatic/Manual transmission toggle) → 3-2-1-GO **countdown** →
+**Racing**. Reach each checkpoint in order before the timer hits zero;
+each gate adds time. Crossing the finish line records your time
+(persisted per-track in `localStorage`).
+
+### Controls
 
 | Action | Keys |
 |---|---|
 | Accelerate | `W` / `↑` |
 | Brake · reverse | `S` / `↓` |
-| Steer | `A` `D` / `← →` |
-| Toggle camera (chase ↔ cockpit) | `C` |
-| Reset car to spawn | `R` |
+| Steer | `A D` / `← →` |
+| Shift up · down (manual) | `E` · `Q` |
+| Camera (chase ↔ cockpit) | `C` |
+| Reset to last checkpoint | `R` |
+| Skip replay | `Space` |
+| Toggle Automatic ↔ Manual | `T` |
+| Mute engine | `M` |
+| Back to Track Select / Menu | `Esc` |
+| Switch tracks during a run | `1` `2` `3` |
 
-## What's implemented (M0–M2)
+### What you'll see
 
-- **M0 — scaffold & render loop.** Vite + strict TypeScript. `Engine` runs a
-  fixed-timestep loop (1/60 s) with an accumulator and renders with an
-  interpolation factor, so motion is smooth at any refresh rate. Lit scene,
-  ground, grid.
-- **M1 — physics.** `PhysicsWorld` initialises Rapier (WASM) and owns the world.
-  `BodyView` binds a rigid body to a Three.js object and interpolates its
-  transform between physics steps. Demo crates fall and rest on the ground.
-- **M2 — drivable car.** `Car` is a Rapier `DynamicRayCastVehicleController`
-  (chassis rigid body + 4 suspension rays). Accelerate, brake, reverse,
-  speed-sensitive steering. Chase camera follows yaw only (stays readable
-  through loops); a basic cockpit camera is included as a bonus.
+- **Cockpit dashboard**: analogue rev counter + speedometer (SVG), gear
+  letter, transmission mode, `LIMIT` warning at the redline.
+- **Race bar** (top): countdown timer (turns red in the last 5 s), CP
+  counter (`CP 2/4`), `WRECKED` badge during the crash tumble.
+- **Forward-helix loops** on Tracks 2 and 3: tangent-aligned so the
+  chassis stays upright through the apex (no Rapier raycast-suspension
+  upside-down issues).
+- **Cinematic replays** on crashes and on long-airtime jumps (>1.2 s).
+- **Off-track countdown**: drive off the ribbon and you've got 5 s to
+  return before you're respawned at the last checkpoint.
 
-A test ramp and six dynamic crates are in the scene so collisions and jumps are
-easy to sanity-check. They are placeholder sandbox objects — the real
-data-driven track system replaces them at M4.
+---
 
-## Project layout
+## Tracks
+
+| # | Name | Difficulty | Highlights |
+|---|---|---|---|
+| 1 | Skyline Run | easy | Closed loop. 4 straights + 4 corners; symmetric hill on each side straight; jump + valley on the back straight. |
+| 2 | Loopback | medium | Closed loop. Jump + valley, forward-helix loop, narrow section. |
+| 3 | The Gauntlet | hard | Closed loop. Two jumps with valleys, narrow + banked S-curve, forward-helix loop. |
+
+Each track is a closed circuit: cross the start line, drive a lap, cross
+the finish line (= start line). Per-track best times live in
+`localStorage`.
+
+---
+
+## Architecture
+
+Plain TypeScript modules orchestrated from `src/main.ts`. The game is a
+single page; menus and the result modal are HTML overlays driven by URL
+parameters so each "screen transition" is a normal navigation.
 
 ```
 src/
-  main.ts              bootstraps everything, owns the loop wiring
+  main.ts                    URL routing + game loop wiring
   core/
-    Engine.ts          renderer + fixed-step loop + interpolation
-    PhysicsWorld.ts    async Rapier init + world wrapper
-    Input.ts           keyboard: held state + key-press callbacks
-    BodyView.ts        rigid body <-> Three.js object, transform interpolation
+    Engine.ts                Three.js renderer + fixed-step accumulator + RAF
+    PhysicsWorld.ts          Rapier WASM init + world wrapper
+    Input.ts                 keyboard: held state + edge-press callbacks
+    BodyView.ts              rigid body ↔ Three.js, transform interpolation
   world/
-    Scene.ts           lights, ground, ramp, demo crates (placeholder sandbox)
-    DemoProp.ts         throwaway dynamic crate
+    Scene.ts                 sky dome, sun, hemisphere light, ground + grid
   vehicle/
-    Car.ts             raycast-vehicle car + driving + visual sync
-    CarConfig.ts       all tunable car constants
+    Car.ts                   chassis + DynamicRayCastVehicleController + visuals
+    CarConfig.ts             tunable constants (mass, torque, suspension, gears…)
+    Drivetrain.ts            RPM model, torque curve, manual/automatic transmission
+  track/
+    TrackTypes.ts            Segment / Checkpoint / TrackDef
+    TrackBuilder.ts          walks the segment list → ribbon + Rapier trimesh
+    tracks/                  track01_easy.ts, track02_medium.ts, track03_hard.ts
+  race/
+    Race.ts                  race state machine (countdown / racing / timeup / finished)
+    RaceTimer.ts             countdown + per-gate bonus
+    Checkpoints.ts           ordered gate detection (position-based AABB)
+    CrashSystem.ts           kill-plane + tipped-stuck triggers, fires onCrash
+    OffTrackDetector.ts      5 s grace countdown when wheels leave the ribbon
+  replay/
+    ReplayRecorder.ts        12 s ring buffer (per fixed step)
+    ReplayPlayer.ts          real-time playback with onComplete callback
+    ReplayCamera.ts          slow orbit cinematic camera
   camera/
-    CameraRig.ts       chase + cockpit cameras
+    CameraRig.ts             chase + cockpit + trauma-based shake
+  audio/
+    EngineSound.ts           procedural engine drone + wind whoosh (Web Audio)
+    Sfx.ts                   procedural one-shots: beep / chime / thud
+  ui/
+    Hud.ts                   SVG dashboard + race bar + result modal + overlays
+    Menus.ts                 Main Menu + Track Select screens
 ```
 
-## Tuning notes — read before you complain about the driving
+### Notable design decisions
 
-The driving **will not feel finished yet** — that is expected. Per the MVP spec,
-M2 ends with a hands-on tuning pass, and the raycast-vehicle is the highest-risk
-part of the project.
+- **Fixed 1/60 s physics with render interpolation.** Rapier is never
+  stepped with a variable dt; visuals are smoothed by `BodyView`
+  interpolating between the previous and current physics transforms.
+- **Track is data.** A `TrackDef` is a list of segments
+  (`straight | rampUp | rampDown | gap | loop | bankedCurve | narrow`).
+  `TrackBuilder` walks an orthonormal frame along the list and emits a
+  ribbon of cross-sections + a single Rapier `trimesh` collider.
+- **Forward-helix loops** instead of closed vertical circles. A true
+  closed loop would invert the chassis at the top, and Rapier's
+  raycast-suspension pushes wheels *away* from the surface (so the car
+  falls off). The tangent-aligned helix keeps the chassis upright,
+  pitching at most ~22°.
+- **Position-based gate detection.** Checkpoints have no Rapier
+  colliders — too easy to accidentally apply contact forces. The
+  detector transforms the chassis position into each gate's local
+  frame and checks an AABB.
+- **closedLoop snap.** For circuit tracks, the last cross-section of
+  the final strip is snapped onto the first cross-section so the
+  ribbon visually closes with no seam.
+- **minY normalisation.** TrackBuilder shifts the whole track so its
+  lowest point sits 1 m above the ground plane, regardless of how
+  high the loop apex gets — no track ever dips through the ground
+  and disappears.
+- **Procedural audio.** Engine = two detuned saw/square oscillators
+  through a lowpass, frequency = rpm/30 (4-stroke firing rate). Wind
+  = looped noise buffer scaled by speed². SFX = sine bursts with
+  attack-decay envelopes. No external samples.
 
-- All tunable values are in `src/vehicle/CarConfig.ts`. Start there.
-- The `maxEngineForce` / `maxReverseForce` / `brakeForce` values are provisional
-  starting points. If acceleration feels too weak or too strong, scale them.
-- **If a sign is reversed:** if `W` drives the car backwards, flip the sign of
-  the engine force (or the forward axis in `Car.ts`). If steering is mirrored,
-  negate `steerInput`. These are quick one-line fixes.
-- If the car flips easily, lower `frictionSlip`, raise `angularDamping`
-  slightly, or lower the chassis centre of mass (not yet exposed — would be a
-  small `Car.ts` change).
-- Suspension feel: `suspensionStiffness`, `suspensionCompression`,
-  `suspensionRelaxation`, `maxSuspensionTravel`.
+---
 
-Other known scaffold simplifications:
+## Status
 
-- The cockpit camera is intentionally basic (rolls fully with the car). The
-  polished cockpit + dashboard arrives with M3/M4.
-- The production bundle is large because `@dimforge/rapier3d-compat` inlines its
-  WebAssembly as base64. Harmless for now; can be optimised later by switching
-  to the non-compat Rapier package with a Vite WASM plugin.
+All MVP milestones from the spec (M0–M10) are complete:
 
-## Next steps
+| # | What |
+|---|---|
+| M0 | Vite + TS + Three.js scaffold, fixed-step game loop |
+| M1 | Rapier physics with render interpolation |
+| M2 | Drivable raycast-vehicle car |
+| M3 | RPM drivetrain + transmission + SVG dashboard + engine sound |
+| M4 | Data-driven TrackBuilder + Track 1 |
+| M5 | Checkpoints + race timer + result modal + best-time persistence |
+| M6 | Crash detection + recovery |
+| M7 | Replay system (crash + highlight) |
+| M8 | Tracks 2 & 3 (loop + corkscrew vocabulary) |
+| M9 | Main Menu / Track Select / Countdown / Result flow |
+| M10 | Better chassis model, camera shake, atmospheric sky, wind sound, CREDITS.md |
 
-Continue with the milestones in `STUNTLINE_MVP.md`:
+Post-MVP additions:
+- All three tracks reworked into **closed-loop circuits** with start =
+  finish line, distinguished features (hills/jumps/valleys/loops/narrows)
+  per side, and seamless ribbon closure.
+- **Earth skirts**: dirt walls extending from the slab's bottom edges
+  down to the ground with a vertex-colour gradient (fakes ambient
+  occlusion at the hill/ground crease) and an outward taper, so tracks
+  read as sitting on hills rather than floating on stilts.
+- **Yellow centre stripe** along each track for depth cues over bumps.
+- **Off-track 5 s auto-respawn** with red-border flash + per-second beep.
+- **Tipped-over wreck** triggers at any tilt past ~73° (so chassis on
+  its side, not just upside-down, gets the crash + reset).
 
-- **M3** — RPM drivetrain (manual + automatic transmission), dashboard gauges,
-  engine sound. The placeholder direct-force driving in `Car.ts` gets replaced
-  by a proper `Drivetrain`.
-- **M4** — data-driven track system (`TrackBuilder` + `TrackDef`) and Track 1;
-  this removes the placeholder ramp and crates.
-- **M5+** — checkpoints & timer, crash/recovery, replays, remaining tracks,
-  menus, polish.
+---
+
+## Stack
+
+- **TypeScript** (strict)
+- **Vite** (dev server + build)
+- **Three.js** r169 (WebGL renderer)
+- **@dimforge/rapier3d-compat** 0.14 (physics, loaded as WASM via the
+  compat package's base64 bundle)
+- **Web Audio API** (no library)
+
+No game engine, no React, no shaders beyond the sky-dome gradient.
+
+---
+
+## Spec acceptance criteria (§7)
+
+1. ✅ Three completable tracks of escalating difficulty.
+2. ✅ Ordered gates, per-gate bonuses, fail on timeout, finish records a time.
+3. ✅ Accelerator / brake / reverse / keyboard steering, arcade feel.
+4. ✅ Manual / Automatic transmission chosen before a run.
+5. ✅ Cockpit default with analog tach + speedo; chase via `C`.
+6. ✅ Looping engine sound tracks RPM with rev-limiter effect.
+7. ✅ Elevated track + ground-beside recovery behaviour.
+8. ✅ Crashes + notable jumps trigger cinematic replays, `Space` skips.
+9. ✅ Best time per track persists across sessions (`localStorage`).
+10. ✅ Stable 60 FPS on a mid-range laptop, no console errors, fixed-step physics.
+11. ✅ Original / procedural assets only.
+
+---
+
+## Credits
+
+All visual and audio assets are original or procedurally generated at
+runtime. See [public/CREDITS.md](./public/CREDITS.md) for the full
+inventory.

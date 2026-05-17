@@ -46,6 +46,8 @@ export interface HudRaceState {
   newBest: boolean;
   wrecked: boolean;
   countdownPhase: 3 | 2 | 1 | 'GO' | null;
+  /** Off-track countdown: integer seconds left, or 0 when on-track. */
+  offTrackSecondsLeft: number;
 }
 
 export interface HudCallbacks {
@@ -76,6 +78,7 @@ export class Hud {
   private readonly wreckEl: HTMLElement;
   private readonly replayEl: HTMLElement;
   private readonly countdownEl: HTMLElement;
+  private readonly offTrackEl: HTMLElement;
   private readonly resultBtnRetry: HTMLButtonElement;
   private readonly resultBtnTracks: HTMLButtonElement;
   private readonly resultBtnMenu: HTMLButtonElement;
@@ -176,6 +179,13 @@ export class Hud {
     this.countdownEl.style.display = 'none';
     container.appendChild(this.countdownEl);
 
+    this.offTrackEl = document.createElement('div');
+    this.offTrackEl.id = 'offtrack-overlay';
+    this.offTrackEl.style.display = 'none';
+    this.offTrackEl.innerHTML =
+      '<div class="offtrack-label">OFF TRACK</div><div class="offtrack-num">5</div>';
+    container.appendChild(this.offTrackEl);
+
     const gauges = document.createElement('div');
     gauges.className = 'hud-gauges';
     this.root.appendChild(gauges);
@@ -253,6 +263,16 @@ export class Hud {
       this.countdownEl.classList.toggle('go', r.countdownPhase === 'GO');
     } else {
       this.countdownEl.style.display = 'none';
+    }
+
+    // Off-track warning + countdown
+    if (r.offTrackSecondsLeft > 0) {
+      this.offTrackEl.style.display = '';
+      const num = this.offTrackEl.querySelector('.offtrack-num');
+      const label = String(r.offTrackSecondsLeft);
+      if (num && num.textContent !== label) num.textContent = label;
+    } else {
+      this.offTrackEl.style.display = 'none';
     }
 
     if (r.state === 'racing') {
@@ -722,6 +742,42 @@ function injectStyles(): void {
       0% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
       30% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
       100% { transform: translate(-50%, -50%) scale(0.92); opacity: 1; }
+    }
+
+    #offtrack-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      user-select: none;
+      box-shadow: inset 0 0 0 6px rgba(255, 79, 79, 0.55);
+      animation: offtrack-flash 0.8s ease-in-out infinite;
+      z-index: 8;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    }
+    @keyframes offtrack-flash {
+      0%, 100% { box-shadow: inset 0 0 0 6px rgba(255, 79, 79, 0.25); }
+      50%      { box-shadow: inset 0 0 0 6px rgba(255, 79, 79, 0.85); }
+    }
+    .offtrack-label {
+      position: absolute;
+      top: 90px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 8px;
+      color: #ff4f4f;
+      text-shadow: 0 0 14px rgba(255, 79, 79, 0.6);
+    }
+    .offtrack-num {
+      position: absolute;
+      top: 130px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 84px;
+      font-weight: 900;
+      color: #ff4f4f;
+      text-shadow: 0 0 18px rgba(255, 79, 79, 0.55);
     }
   `;
   const style = document.createElement('style');
