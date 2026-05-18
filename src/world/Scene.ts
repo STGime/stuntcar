@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { buildMountains } from './Mountains';
 
 /**
  * Direction vector from the sun's target to its position (i.e. where sunlight
@@ -55,6 +56,9 @@ export function buildScene(scene: THREE.Scene, world: RAPIER.World): SceneRefs {
   const sky = new THREE.Mesh(skyGeo, skyMat);
   sky.frustumCulled = false;
   scene.add(sky);
+
+  // Distant mountain ridge ring (decoration, no collider).
+  buildMountains(scene);
 
   // --- Lighting --------------------------------------------------------------
   // Cinematic split: cool blue sky-fill from above plays against the warm
