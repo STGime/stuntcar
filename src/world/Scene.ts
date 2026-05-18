@@ -22,18 +22,22 @@ export interface SceneRefs {
  * this module just owns lights and the ground beneath/around it.
  */
 export function buildScene(scene: THREE.Scene, world: RAPIER.World): SceneRefs {
-  // --- Sky dome (vertical gradient) -----------------------------------------
+  // --- Sky dome (vertical gradient + sun disc) ------------------------------
   // Inverted-normals sphere with a shader that lerps a horizon tone into a
-  // sky tone. Gives the scene a believable atmosphere without a skybox asset.
+  // sky tone, plus a soft sun disc + halo in the same direction as the
+  // directional sun light. Sun colour is > 1 so the bloom pass picks it up.
   const skyTop = new THREE.Color(0x6b88c4);
   const skyHorizon = new THREE.Color(0xe5cda3);
-  const skyGeo = new THREE.SphereGeometry(450, 24, 12);
+  const skyGeo = new THREE.SphereGeometry(450, 32, 16);
+  const sunDir = SUN_OFFSET.clone().normalize();
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     uniforms: {
       uTop: { value: skyTop },
       uHorizon: { value: skyHorizon },
+      uSunDir: { value: sunDir },
+      uSunColor: { value: new THREE.Color(2.0, 1.65, 1.15) }, // > 1 to drive bloom
     },
     vertexShader: `
       varying vec3 vWorldPos;
@@ -46,10 +50,21 @@ export function buildScene(scene: THREE.Scene, world: RAPIER.World): SceneRefs {
     fragmentShader: `
       uniform vec3 uTop;
       uniform vec3 uHorizon;
+      uniform vec3 uSunDir;
+      uniform vec3 uSunColor;
       varying vec3 vWorldPos;
       void main() {
-        float h = clamp(normalize(vWorldPos).y * 0.6 + 0.5, 0.0, 1.0);
-        gl_FragColor = vec4(mix(uHorizon, uTop, smoothstep(0.0, 0.85, h)), 1.0);
+        vec3 dir = normalize(vWorldPos);
+        float h = clamp(dir.y * 0.6 + 0.5, 0.0, 1.0);
+        vec3 base = mix(uHorizon, uTop, smoothstep(0.0, 0.85, h));
+
+        // Sun: tight disc + wide soft halo.
+        float ang = max(dot(dir, normalize(uSunDir)), 0.0);
+        float disc = smoothstep(0.9985, 0.99965, ang);
+        float halo = pow(ang, 32.0) * 0.45;
+        vec3 col = base + uSunColor * (disc + halo);
+
+        gl_FragColor = vec4(col, 1.0);
       }
     `,
   });

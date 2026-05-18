@@ -18,6 +18,7 @@ import { ReplayRecorder } from './replay/ReplayRecorder';
 import { ReplayPlayer } from './replay/ReplayPlayer';
 import { ReplayCamera } from './replay/ReplayCamera';
 import { Menus, loadTransmission } from './ui/Menus';
+import { SkidEffects } from './fx/SkidEffects';
 
 const FIXED_DT = 1 / 60;
 const CRASH_REPLAY_SEC = 3.0;
@@ -71,12 +72,14 @@ async function main(): Promise<void> {
 
   const camera = new CameraRig();
   engine.setCamera(camera.camera);
+  engine.enablePostFX();
 
   const hud = new Hud(document.body);
   hud.setResultCallbacks({ onRetry: gotoRetry, onTrackSelect: gotoTracks, onMenu: gotoMenu });
 
   const engineSound = new EngineSound();
   const sfx = new Sfx();
+  const skidFx = new SkidEffects(engine.scene);
 
   const race = new Race(trackDef, track, car, engine.scene);
   race.onCountdownTick = (phase) => {
@@ -139,6 +142,12 @@ async function main(): Promise<void> {
 
   let airtimeSec = 0;
   let wasAirborne = false;
+
+  // Reusable scratch for slip-vector math in the fixed step.
+  const tmpFwd = new THREE.Vector3();
+  const tmpRight = new THREE.Vector3();
+  const tmpQuat = new THREE.Quaternion();
+  const tmpLinvel = new THREE.Vector3();
 
   // --- Audio start gesture -------------------------------------------------
   const startAudioOnce = (): void => {
@@ -217,6 +226,36 @@ async function main(): Promise<void> {
       crashSystem.update(dt);
       offTrack.update(dt);
 
+      // Tire skid marks + smoke. Detect "tire would lose grip" via the
+      // chassis's lateral velocity (cornering past grip) or a heavy-brake
+      // condition at speed. Spawn FX only at wheels actually touching the
+      // ground so airborne stunts stay clean.
+      if (race.state === 'racing' && crashSystem.state === 'normal') {
+        const linvel = car.chassisBody.linvel();
+        const rotR = car.chassisBody.rotation();
+        tmpQuat.set(rotR.x, rotR.y, rotR.z, rotR.w);
+        tmpFwd.set(0, 0, 1).applyQuaternion(tmpQuat);
+        tmpRight.set(1, 0, 0).applyQuaternion(tmpQuat);
+        tmpLinvel.set(linvel.x, linvel.y, linvel.z);
+        const lateral = Math.abs(tmpLinvel.dot(tmpRight));
+        const forward = tmpLinvel.dot(tmpFwd);
+        const speed = tmpLinvel.length();
+        const heavyBrake =
+          input.isDown('ArrowDown', 'KeyS') && Math.abs(forward) > 11;
+        const cornering = lateral > 4.2;
+        if (heavyBrake || cornering) {
+          const intensity = Math.min(
+            1,
+            Math.max((lateral - 3) / 6, heavyBrake ? speed / 35 : 0),
+          );
+          for (let i = 0; i < car.wheelCount; i++) {
+            const c = car.wheelContact(i);
+            if (!c) continue;
+            skidFx.emit(c, rotR, intensity);
+          }
+        }
+      }
+
       // Checkpoint chime on each gate pass.
       if (race.checkpoints.passed !== lastPassedCount) {
         if (race.checkpoints.passed > lastPassedCount) sfx.chime();
@@ -271,6 +310,8 @@ async function main(): Promise<void> {
 
       car.render(alpha);
       camera.update(car, frameDt);
+      skidFx.update(frameDt);
+      race.checkpoints.animate(performance.now() / 1000);
 
       // Slide the shadow camera along with the car so its tight frustum
       // always covers the area the player can see. The sun keeps its

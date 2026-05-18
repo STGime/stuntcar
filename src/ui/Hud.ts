@@ -112,6 +112,7 @@ export class Hud {
   private nameSubmitted = false;
   private newEntryIndex: number | null = null;
   private currentTrackId: string | null = null;
+  private pendingFinishTimeSec: number | null = null;
   private lastBannerLap = 1;
 
   constructor(container: HTMLElement) {
@@ -390,6 +391,7 @@ export class Hud {
         qualifies(r.trackId, r.finishTimeSec)
       ) {
         this.nameEntryActive = true;
+        this.pendingFinishTimeSec = r.finishTimeSec;
         // Auto-focus so the player can type immediately. Defer until the
         // modal is in the DOM with display:flex.
         queueMicrotask(() => {
@@ -435,13 +437,13 @@ export class Hud {
   private submitName(): void {
     if (!this.nameEntryActive || this.nameSubmitted) return;
     if (this.currentTrackId === null) return;
+    if (this.pendingFinishTimeSec === null) return;
     const raw = this.modalNameInput.value.trim() || 'AAA';
-    // We re-read the time from the modal display to avoid threading it through
-    // state — `modalTime` was set from the snapshot moments ago.
-    const timeStr = this.modalTime.textContent ?? '';
-    const time = parseFloat(timeStr);
-    if (!Number.isFinite(time)) return;
-    const { newIndex } = submitScore(this.currentTrackId, raw, time);
+    const { newIndex } = submitScore(
+      this.currentTrackId,
+      raw,
+      this.pendingFinishTimeSec,
+    );
     this.newEntryIndex = newIndex;
     this.nameSubmitted = true;
     this.modalNameRow.style.display = 'none';
@@ -477,6 +479,7 @@ export class Hud {
       this.nameEntryActive = false;
       this.nameSubmitted = false;
       this.newEntryIndex = null;
+      this.pendingFinishTimeSec = null;
       this.modalNameRow.style.display = 'none';
       this.modalNameInput.value = '';
     }
@@ -506,8 +509,10 @@ function escapeHtml(s: string): string {
 }
 
 function formatTime(seconds: number): string {
-  const s = Math.max(0, seconds);
-  return s.toFixed(1).padStart(4, '0');
+  const total = Math.max(0, seconds);
+  const m = Math.floor(total / 60);
+  const s = total - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
 function makeGauge(parent: HTMLElement, opts: GaugeOpts): Gauge {
@@ -779,7 +784,7 @@ function injectStyles(): void {
       font-weight: 800;
       color: #4fd1c5;
       letter-spacing: 1px;
-      min-width: 80px;
+      min-width: 110px;
       text-align: center;
       transition: color 0.1s linear;
     }

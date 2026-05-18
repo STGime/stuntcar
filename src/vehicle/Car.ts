@@ -288,6 +288,19 @@ export class Car {
     for (const m of this.cockpitHidden) m.visible = !active;
   }
 
+  /** Per-wheel ground-contact info (world space), or `null` if airborne.
+   *  Used by the skid/smoke FX system to place marks at the contact patch. */
+  wheelContact(i: number): { x: number; y: number; z: number } | null {
+    if (!this.controller.wheelIsInContact(i)) return null;
+    const p = this.controller.wheelContactPoint(i);
+    return p ? { x: p.x, y: p.y, z: p.z } : null;
+  }
+
+  /** Number of wheels managed by the vehicle controller. */
+  get wheelCount(): number {
+    return CarConfig.wheels.length;
+  }
+
   /** Toggle wrecked state. While true, `update()` applies zero driving force. */
   setCrashed(c: boolean): void {
     this.crashed = c;

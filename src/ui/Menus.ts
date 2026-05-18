@@ -36,7 +36,10 @@ function loadBestTimeSec(trackId: string): number | null {
 
 function fmt(seconds: number | null): string {
   if (seconds === null) return '— —';
-  return seconds.toFixed(1).padStart(4, '0');
+  const total = Math.max(0, seconds);
+  const m = Math.floor(total / 60);
+  const s = total - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
 /** Pre-game UI screen: Main menu or Track Select, decided from the URL. */

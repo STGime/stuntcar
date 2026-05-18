@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PostFX } from './PostFX';
 
 /**
  * Owns the renderer, scene, active camera and the main loop.
@@ -11,6 +12,7 @@ export class Engine {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   camera: THREE.PerspectiveCamera | null = null;
+  private postFX: PostFX | null = null;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -39,13 +41,21 @@ export class Engine {
 
   setCamera(camera: THREE.PerspectiveCamera): void {
     this.camera = camera;
+    if (this.postFX) this.postFX.setCamera(camera);
     this.handleResize();
+  }
+
+  /** Install an UnrealBloom-based post-FX pipeline. Call after `setCamera`. */
+  enablePostFX(): void {
+    if (this.postFX || !this.camera) return;
+    this.postFX = new PostFX(this.renderer, this.scene, this.camera);
   }
 
   private handleResize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.renderer.setSize(w, h);
+    this.postFX?.setSize(w, h);
     if (this.camera) {
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
@@ -88,7 +98,11 @@ export class Engine {
       const alpha = accumulator / fixedDt;
       onRender(alpha, frameDt);
 
-      if (this.camera) this.renderer.render(this.scene, this.camera);
+      if (this.postFX) {
+        this.postFX.render();
+      } else if (this.camera) {
+        this.renderer.render(this.scene, this.camera);
+      }
     };
 
     requestAnimationFrame(loop);
