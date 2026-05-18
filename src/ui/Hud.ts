@@ -1,4 +1,11 @@
 import { CarConfig } from '../vehicle/CarConfig';
+import {
+  loadLeaderboard,
+  qualifies,
+  submitScore,
+  NAME_LEN,
+  type LeaderboardEntry,
+} from '../race/Leaderboard';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -41,6 +48,8 @@ export interface HudRaceState {
   elapsedSec: number;
   passed: number;
   total: number;
+  currentLap: number;
+  totalLaps: number;
   bestTimeSec: number | null;
   finishTimeSec: number | null;
   newBest: boolean;
@@ -48,6 +57,8 @@ export interface HudRaceState {
   countdownPhase: 3 | 2 | 1 | 'GO' | null;
   /** Off-track countdown: integer seconds left, or 0 when on-track. */
   offTrackSecondsLeft: number;
+  /** Track id — used to look up the leaderboard on the result screen. */
+  trackId: string;
 }
 
 export interface HudCallbacks {
@@ -74,11 +85,13 @@ export class Hud {
   // Race HUD (top-center).
   private readonly raceBar: HTMLElement;
   private readonly timerEl: HTMLElement;
+  private readonly lapEl: HTMLElement;
   private readonly cpEl: HTMLElement;
   private readonly wreckEl: HTMLElement;
   private readonly replayEl: HTMLElement;
   private readonly countdownEl: HTMLElement;
   private readonly offTrackEl: HTMLElement;
+  private readonly lapBannerEl: HTMLElement;
   private readonly resultBtnRetry: HTMLButtonElement;
   private readonly resultBtnTracks: HTMLButtonElement;
   private readonly resultBtnMenu: HTMLButtonElement;
@@ -88,6 +101,18 @@ export class Hud {
   private readonly modalTitle: HTMLElement;
   private readonly modalTime: HTMLElement;
   private readonly modalSub: HTMLElement;
+  private readonly modalNameRow: HTMLElement;
+  private readonly modalNameInput: HTMLInputElement;
+  private readonly modalNameSubmit: HTMLButtonElement;
+  private readonly modalBoard: HTMLElement;
+
+  // Result-screen leaderboard / name-entry local state.
+  private resultShown = false;
+  private nameEntryActive = false;
+  private nameSubmitted = false;
+  private newEntryIndex: number | null = null;
+  private currentTrackId: string | null = null;
+  private lastBannerLap = 1;
 
   constructor(container: HTMLElement) {
     this.root = document.createElement('div');
@@ -104,6 +129,11 @@ export class Hud {
     this.timerEl.className = 'race-timer';
     this.timerEl.textContent = '00.0';
     this.raceBar.appendChild(this.timerEl);
+
+    this.lapEl = document.createElement('div');
+    this.lapEl.className = 'race-lap';
+    this.lapEl.textContent = 'LAP 1/3';
+    this.raceBar.appendChild(this.lapEl);
 
     this.cpEl = document.createElement('div');
     this.cpEl.className = 'race-cp';
@@ -146,6 +176,56 @@ export class Hud {
     this.modalSub.className = 'race-modal-sub';
     card.appendChild(this.modalSub);
 
+    // Name-entry row: shown when the finish time qualifies for the top 10.
+    this.modalNameRow = document.createElement('div');
+    this.modalNameRow.className = 'race-modal-name-row';
+    this.modalNameRow.style.display = 'none';
+    card.appendChild(this.modalNameRow);
+
+    const nameLabel = document.createElement('div');
+    nameLabel.className = 'race-modal-name-label';
+    nameLabel.textContent = 'ENTER YOUR NAME';
+    this.modalNameRow.appendChild(nameLabel);
+
+    const nameInputRow = document.createElement('div');
+    nameInputRow.className = 'race-modal-name-input-row';
+    this.modalNameRow.appendChild(nameInputRow);
+
+    this.modalNameInput = document.createElement('input');
+    this.modalNameInput.className = 'race-modal-name-input';
+    this.modalNameInput.maxLength = NAME_LEN;
+    this.modalNameInput.autocomplete = 'off';
+    this.modalNameInput.spellcheck = false;
+    this.modalNameInput.placeholder = 'AAA';
+    this.modalNameInput.style.pointerEvents = 'auto';
+    this.modalNameInput.addEventListener('input', () => {
+      const sanitised = this.modalNameInput.value
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '')
+        .slice(0, NAME_LEN);
+      if (this.modalNameInput.value !== sanitised) {
+        this.modalNameInput.value = sanitised;
+      }
+    });
+    this.modalNameInput.addEventListener('keydown', (e) => {
+      // Eat keys so global game shortcuts (R, T, M, etc.) don't fire.
+      e.stopPropagation();
+      if (e.key === 'Enter') this.submitName();
+    });
+    nameInputRow.appendChild(this.modalNameInput);
+
+    this.modalNameSubmit = document.createElement('button');
+    this.modalNameSubmit.className = 'race-modal-btn primary';
+    this.modalNameSubmit.textContent = 'Save';
+    this.modalNameSubmit.style.pointerEvents = 'auto';
+    this.modalNameSubmit.onclick = () => this.submitName();
+    nameInputRow.appendChild(this.modalNameSubmit);
+
+    // Leaderboard list (top 10).
+    this.modalBoard = document.createElement('div');
+    this.modalBoard.className = 'race-modal-board';
+    card.appendChild(this.modalBoard);
+
     const btnRow = document.createElement('div');
     btnRow.className = 'race-modal-btns';
     card.appendChild(btnRow);
@@ -185,6 +265,12 @@ export class Hud {
     this.offTrackEl.innerHTML =
       '<div class="offtrack-label">OFF TRACK</div><div class="offtrack-num">5</div>';
     container.appendChild(this.offTrackEl);
+
+    // Lap-change banner (briefly flashes "LAP 2" / "LAP 3" / "FINAL LAP").
+    this.lapBannerEl = document.createElement('div');
+    this.lapBannerEl.id = 'lap-banner';
+    this.lapBannerEl.style.display = 'none';
+    container.appendChild(this.lapBannerEl);
 
     const gauges = document.createElement('div');
     gauges.className = 'hud-gauges';
@@ -250,10 +336,22 @@ export class Hud {
   }
 
   updateRace(r: HudRaceState): void {
+    this.currentTrackId = r.trackId;
+
     this.timerEl.textContent = formatTime(r.remainingSec);
     this.timerEl.classList.toggle('warn', r.remainingSec < 5 && r.state === 'racing');
     this.cpEl.textContent = `CP ${Math.min(r.passed, r.total)}/${r.total}`;
+    this.lapEl.textContent = `LAP ${r.currentLap}/${r.totalLaps}`;
     this.wreckEl.style.display = r.wrecked ? '' : 'none';
+
+    // Briefly flash a banner when the lap number changes mid-race.
+    if (r.state === 'racing' && r.currentLap !== this.lastBannerLap) {
+      this.lastBannerLap = r.currentLap;
+      this.flashLapBanner(r.currentLap, r.totalLaps);
+    } else if (r.state === 'countdown') {
+      // Reset banner tracking on a fresh run so lap 1 → 2 fires correctly later.
+      this.lastBannerLap = r.currentLap;
+    }
 
     // Countdown overlay
     if (r.countdownPhase !== null) {
@@ -277,15 +375,38 @@ export class Hud {
 
     if (r.state === 'racing' || r.state === 'countdown') {
       this.modal.style.display = 'none';
+      this.resetResultState();
       return;
     }
 
     this.modal.style.display = 'flex';
+
+    // First render at this result state: decide whether to show name entry.
+    if (!this.resultShown) {
+      this.resultShown = true;
+      if (
+        r.state === 'finished' &&
+        r.finishTimeSec !== null &&
+        qualifies(r.trackId, r.finishTimeSec)
+      ) {
+        this.nameEntryActive = true;
+        // Auto-focus so the player can type immediately. Defer until the
+        // modal is in the DOM with display:flex.
+        queueMicrotask(() => {
+          this.modalNameInput.value = '';
+          this.modalNameInput.focus();
+        });
+      }
+    }
+
     if (r.state === 'finished') {
       this.modalTitle.textContent = 'FINISH';
       this.modalTitle.className = 'race-modal-title finish';
       this.modalTime.textContent = formatTime(r.finishTimeSec ?? r.elapsedSec);
-      if (r.newBest) {
+      if (this.nameEntryActive && !this.nameSubmitted) {
+        this.modalSub.textContent = 'NEW HIGH SCORE!';
+        this.modalSub.className = 'race-modal-sub best';
+      } else if (r.newBest) {
         this.modalSub.textContent = 'NEW BEST TIME!';
         this.modalSub.className = 'race-modal-sub best';
       } else if (r.bestTimeSec !== null) {
@@ -304,7 +425,84 @@ export class Hud {
         r.bestTimeSec !== null ? `Best: ${formatTime(r.bestTimeSec)}` : '';
       this.modalSub.className = 'race-modal-sub';
     }
+
+    this.modalNameRow.style.display =
+      this.nameEntryActive && !this.nameSubmitted ? '' : 'none';
+
+    this.renderLeaderboard(r.trackId);
   }
+
+  private submitName(): void {
+    if (!this.nameEntryActive || this.nameSubmitted) return;
+    if (this.currentTrackId === null) return;
+    const raw = this.modalNameInput.value.trim() || 'AAA';
+    // We re-read the time from the modal display to avoid threading it through
+    // state — `modalTime` was set from the snapshot moments ago.
+    const timeStr = this.modalTime.textContent ?? '';
+    const time = parseFloat(timeStr);
+    if (!Number.isFinite(time)) return;
+    const { newIndex } = submitScore(this.currentTrackId, raw, time);
+    this.newEntryIndex = newIndex;
+    this.nameSubmitted = true;
+    this.modalNameRow.style.display = 'none';
+    this.modalSub.textContent = 'HIGH SCORE SAVED';
+    this.modalSub.className = 'race-modal-sub best';
+    this.renderLeaderboard(this.currentTrackId);
+  }
+
+  private renderLeaderboard(trackId: string): void {
+    const entries = loadLeaderboard(trackId);
+    if (entries.length === 0) {
+      this.modalBoard.innerHTML =
+        '<div class="race-modal-board-empty">no times yet — be the first</div>';
+      return;
+    }
+    const rows = entries
+      .map((e, i) => {
+        const isNew = this.nameSubmitted && i === this.newEntryIndex;
+        return `<div class="race-board-row${isNew ? ' new' : ''}">` +
+          `<div class="race-board-rank">${String(i + 1).padStart(2, '0')}</div>` +
+          `<div class="race-board-name">${escapeHtml(e.name)}</div>` +
+          `<div class="race-board-time">${formatTime(e.timeSec)}</div>` +
+          `</div>`;
+      })
+      .join('');
+    this.modalBoard.innerHTML =
+      '<div class="race-modal-board-title">TOP TIMES</div>' + rows;
+  }
+
+  private resetResultState(): void {
+    if (this.resultShown || this.nameEntryActive || this.nameSubmitted) {
+      this.resultShown = false;
+      this.nameEntryActive = false;
+      this.nameSubmitted = false;
+      this.newEntryIndex = null;
+      this.modalNameRow.style.display = 'none';
+      this.modalNameInput.value = '';
+    }
+  }
+
+  private flashLapBanner(currentLap: number, totalLaps: number): void {
+    if (currentLap <= 1) return;
+    const isFinal = currentLap === totalLaps;
+    this.lapBannerEl.textContent = isFinal ? 'FINAL LAP' : `LAP ${currentLap}`;
+    this.lapBannerEl.classList.toggle('final', isFinal);
+    this.lapBannerEl.style.display = '';
+    // Re-trigger the CSS animation by stripping/re-adding the class.
+    this.lapBannerEl.classList.remove('show');
+    void this.lapBannerEl.offsetWidth;
+    this.lapBannerEl.classList.add('show');
+    window.setTimeout(() => {
+      this.lapBannerEl.style.display = 'none';
+    }, 1800);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function formatTime(seconds: number): string {
@@ -594,6 +792,15 @@ function injectStyles(): void {
       letter-spacing: 2px;
       color: #8892a8;
     }
+    .race-lap {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: #ffd166;
+      padding: 2px 10px;
+      border-radius: 6px;
+      background: rgba(255, 209, 102, 0.10);
+    }
     .race-wreck {
       font-size: 13px;
       font-weight: 800;
@@ -716,6 +923,131 @@ function injectStyles(): void {
       font-size: 10px;
       letter-spacing: 2px;
       color: #6b7689;
+    }
+    .race-modal-name-row {
+      margin: 8px 0 12px;
+      padding: 12px 14px;
+      background: rgba(255, 209, 102, 0.10);
+      border: 1px dashed rgba(255, 209, 102, 0.5);
+      border-radius: 10px;
+    }
+    .race-modal-name-label {
+      font-size: 11px;
+      letter-spacing: 3px;
+      color: #ffd166;
+      margin-bottom: 8px;
+    }
+    .race-modal-name-input-row {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+    }
+    .race-modal-name-input {
+      width: 110px;
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: 8px;
+      text-align: center;
+      color: #ffd166;
+      background: rgba(12, 16, 24, 0.85);
+      border: 1px solid rgba(255, 209, 102, 0.4);
+      border-radius: 8px;
+      text-transform: uppercase;
+      caret-color: #4fff8a;
+    }
+    .race-modal-name-input:focus {
+      outline: none;
+      border-color: #4fff8a;
+      box-shadow: 0 0 12px rgba(79, 255, 138, 0.35);
+    }
+    .race-modal-board {
+      margin: 4px 0 14px;
+      max-height: 240px;
+      overflow-y: auto;
+      text-align: left;
+    }
+    .race-modal-board-title {
+      font-size: 10px;
+      letter-spacing: 3px;
+      color: #6b7689;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+    .race-modal-board-empty {
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      color: #6b7689;
+      text-align: center;
+      padding: 12px 0;
+    }
+    .race-board-row {
+      display: grid;
+      grid-template-columns: 30px 60px 1fr;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 8px;
+      font-size: 13px;
+      letter-spacing: 1px;
+      color: #c7d0e0;
+      border-radius: 4px;
+    }
+    .race-board-row.new {
+      background: rgba(79, 255, 138, 0.14);
+      color: #4fff8a;
+      animation: row-pulse 1.2s ease-in-out 3;
+    }
+    .race-board-rank {
+      color: #6b7689;
+      font-size: 11px;
+      letter-spacing: 0;
+    }
+    .race-board-name {
+      font-weight: 800;
+      letter-spacing: 3px;
+    }
+    .race-board-time {
+      font-family: inherit;
+      text-align: right;
+      color: #ffd166;
+      font-weight: 700;
+    }
+    .race-board-row.new .race-board-time { color: #4fff8a; }
+    @keyframes row-pulse {
+      0%, 100% { background: rgba(79, 255, 138, 0.14); }
+      50%      { background: rgba(79, 255, 138, 0.32); }
+    }
+
+    #lap-banner {
+      position: fixed;
+      top: 22%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 56px;
+      font-weight: 900;
+      letter-spacing: 8px;
+      color: #4fff8a;
+      text-shadow: 0 0 22px rgba(79, 255, 138, 0.55);
+      pointer-events: none;
+      user-select: none;
+      z-index: 9;
+      opacity: 0;
+    }
+    #lap-banner.final {
+      color: #ff4f4f;
+      text-shadow: 0 0 22px rgba(255, 79, 79, 0.6);
+    }
+    #lap-banner.show {
+      animation: lap-banner-pop 1.7s ease-out forwards;
+    }
+    @keyframes lap-banner-pop {
+      0%   { transform: translate(-50%, -50%) scale(1.4); opacity: 0; }
+      15%  { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+      75%  { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+      100% { transform: translate(-50%, -50%) scale(0.95); opacity: 0; }
     }
 
     #countdown-overlay {

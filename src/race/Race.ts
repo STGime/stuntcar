@@ -16,6 +16,10 @@ export interface RaceSnapshot {
   elapsedSec: number;
   passed: number;
   total: number;
+  /** Current lap (1..totalLaps). */
+  currentLap: number;
+  /** Laps required to finish. */
+  totalLaps: number;
   bestTimeSec: number | null;
   /** Finish result (only set in `finished`). */
   finishTimeSec: number | null;
@@ -24,6 +28,8 @@ export interface RaceSnapshot {
   /** Current countdown digit (null when not counting down). */
   countdownPhase: CountdownPhase;
 }
+
+const DEFAULT_TOTAL_LAPS = 3;
 
 /** Total countdown duration: 3, 2, 1, GO at 1s each. */
 const COUNTDOWN_PHASE_SEC = 1.0;
@@ -34,6 +40,9 @@ export class Race {
   state: RaceState = 'countdown';
   readonly checkpoints: Checkpoints;
   readonly timer: RaceTimer;
+  readonly totalLaps: number;
+  readonly lapBonusSec: number;
+  currentLap = 1;
   private finishTimeSec: number | null = null;
   private newBest = false;
   private bestTimeSec: number | null;
@@ -41,6 +50,9 @@ export class Race {
   private lastCountdownPhase: CountdownPhase = null;
   /** Fired when the countdown digit changes (caller plays beep / GO sfx). */
   onCountdownTick: (phase: CountdownPhase) => void = () => {};
+  /** Fired when a lap is completed (i.e. finish line crossed before the
+   *  final lap). Argument is the new lap number (2..totalLaps). */
+  onLapComplete: (newLap: number) => void = () => {};
 
   constructor(
     private readonly def: TrackDef,
@@ -51,6 +63,8 @@ export class Race {
     this.checkpoints = new Checkpoints(scene, track.checkpoints);
     this.timer = new RaceTimer(def.startCountdownSec);
     this.bestTimeSec = loadBestTime(def.id);
+    this.totalLaps = def.totalLaps ?? DEFAULT_TOTAL_LAPS;
+    this.lapBonusSec = def.lapBonusSec ?? 0;
   }
 
   /** Reset and begin a fresh run (in countdown state). */
@@ -60,6 +74,7 @@ export class Race {
     this.finishTimeSec = null;
     this.newBest = false;
     this.state = 'countdown';
+    this.currentLap = 1;
     this.countdownElapsed = 0;
     this.lastCountdownPhase = null;
 
@@ -130,15 +145,25 @@ export class Race {
     if (event) {
       this.timer.addBonus(event.timeBonusSec);
       if (event.isFinish) {
-        this.finishTimeSec = this.timer.elapsed;
-        this.newBest = this.bestTimeSec === null || this.finishTimeSec < this.bestTimeSec;
-        if (this.newBest) {
-          this.bestTimeSec = this.finishTimeSec;
-          saveBestTime(this.def.id, this.finishTimeSec);
+        if (this.currentLap < this.totalLaps) {
+          // Lap completed but the race continues — wrap the gate cursor and
+          // top up the timer with the lap bonus.
+          this.currentLap += 1;
+          this.timer.addBonus(this.lapBonusSec);
+          this.checkpoints.resetForNextLap();
+          this.onLapComplete(this.currentLap);
+        } else {
+          // Final lap finished — record the result.
+          this.finishTimeSec = this.timer.elapsed;
+          this.newBest = this.bestTimeSec === null || this.finishTimeSec < this.bestTimeSec;
+          if (this.newBest) {
+            this.bestTimeSec = this.finishTimeSec;
+            saveBestTime(this.def.id, this.finishTimeSec);
+          }
+          this.state = 'finished';
+          this.timer.setPaused(true);
+          return;
         }
-        this.state = 'finished';
-        this.timer.setPaused(true);
-        return;
       }
     }
 
@@ -155,6 +180,8 @@ export class Race {
       elapsedSec: this.timer.elapsed,
       passed: this.checkpoints.passed,
       total: this.checkpoints.total,
+      currentLap: this.currentLap,
+      totalLaps: this.totalLaps,
       bestTimeSec: this.bestTimeSec,
       finishTimeSec: this.finishTimeSec,
       newBest: this.newBest,

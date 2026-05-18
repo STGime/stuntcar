@@ -35,13 +35,15 @@ const JUMP_PITCH = Math.PI / 10;
 const GAP_LEN = 4;
 const TRANSITION = 8;         // straight between jump-landing and valley
 const C_TAIL = 11;            // straight at the end of side C (after valley)
-const TIME_BONUS = 6.0;
+const TIME_BONUS = 7.0;
 
 export const trackSkylineRun: TrackDef = {
   id: 'skyline-run',
   name: 'Skyline Run',
   difficulty: 'easy',
-  startCountdownSec: 30,
+  startCountdownSec: 40,
+  totalLaps: 3,
+  lapBonusSec: 14,
   spawnY: 1.0, // TrackBuilder pins the lowest point 1 m above the ground anyway
   closedLoop: true,
   segments: [

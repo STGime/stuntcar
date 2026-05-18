@@ -81,6 +81,7 @@ async function main(): Promise<void> {
     if (phase === 'GO') sfx.longBeep();
     else if (phase !== null) sfx.shortBeep();
   };
+  race.onLapComplete = () => sfx.longBeep();
   race.start();
 
   // --- Replay plumbing -----------------------------------------------------
@@ -256,7 +257,12 @@ async function main(): Promise<void> {
           mode: car.drivetrain.mode === 'automatic' ? 'A' : 'M',
           onLimiter: false,
         });
-        hud.updateRace({ ...race.snapshot(), wrecked: false, offTrackSecondsLeft: 0 });
+        hud.updateRace({
+          ...race.snapshot(),
+          wrecked: false,
+          offTrackSecondsLeft: 0,
+          trackId: trackDef.id,
+        });
         engineSound.update(frameDt, frame.rpm, frame.throttle, false, frame.speedKmh);
         return;
       }
@@ -276,6 +282,7 @@ async function main(): Promise<void> {
         ...race.snapshot(),
         wrecked: crashSystem.state === 'wrecking',
         offTrackSecondsLeft: offTrack.secondsLeft(),
+        trackId: trackDef.id,
       });
       engineSound.update(frameDt, dt.rpm, currentThrottle(), dt.onLimiter, car.speedKmh);
     },

@@ -103,6 +103,12 @@ export class Checkpoints {
     }
   }
 
+  /** Re-arm the gate sequence for the next lap. Same effect as `reset()` but
+   *  semantically distinct — the run continues, only the gate cursor wraps. */
+  resetForNextLap(): void {
+    this.reset();
+  }
+
   /** Number of gates already passed (0..total). */
   get passed(): number {
     return this.nextIndex;

@@ -1,4 +1,5 @@
 import { TRACKS } from '../track/tracks';
+import { loadLeaderboard } from '../race/Leaderboard';
 
 const TRANSMISSION_STORAGE_KEY = 'stuntline:transmission';
 
@@ -70,6 +71,19 @@ export class Menus {
     const trans = loadTransmission();
     const cards = TRACKS.map((track, idx) => {
       const best = loadBestTimeSec(track.id);
+      const top = loadLeaderboard(track.id).slice(0, 3);
+      const topRows = top.length === 0
+        ? '<div class="track-card-board-empty">no scores yet</div>'
+        : top
+            .map(
+              (e, i) =>
+                `<div class="track-card-board-row">` +
+                `<span class="tcb-rank">${i + 1}</span>` +
+                `<span class="tcb-name">${escapeHtml(e.name)}</span>` +
+                `<span class="tcb-time">${fmt(e.timeSec)}</span>` +
+                `</div>`,
+            )
+            .join('');
       return `
         <button class="track-card" data-track="${idx + 1}" data-difficulty="${track.difficulty}">
           <div class="track-card-num">${idx + 1}</div>
@@ -77,6 +91,10 @@ export class Menus {
           <div class="track-card-meta">
             <span class="track-card-diff diff-${track.difficulty}">${track.difficulty}</span>
             <span class="track-card-best">${best === null ? 'no time yet' : `best ${fmt(best)}s`}</span>
+          </div>
+          <div class="track-card-board">
+            <div class="track-card-board-title">TOP TIMES</div>
+            ${topRows}
           </div>
         </button>
       `;
@@ -127,6 +145,13 @@ function navigate(query: string): void {
   const url = new URL(location.href);
   url.search = query;
   location.assign(url.toString());
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 let stylesInjected = false;
@@ -255,6 +280,36 @@ function injectStyles(): void {
     .diff-medium { background: rgba(255, 209, 102, 0.18); color: #ffd166; }
     .diff-hard { background: rgba(255, 79, 79, 0.18); color: #ff4f4f; }
     .track-card-best { color: #8892a8; }
+
+    .track-card-board {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.08);
+    }
+    .track-card-board-title {
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: #6b7689;
+      margin-bottom: 6px;
+    }
+    .track-card-board-row {
+      display: grid;
+      grid-template-columns: 14px 36px 1fr;
+      gap: 6px;
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: #c7d0e0;
+      padding: 1px 0;
+    }
+    .tcb-rank { color: #6b7689; }
+    .tcb-name { font-weight: 800; letter-spacing: 2px; color: #ffd166; }
+    .tcb-time { text-align: right; color: #c7d0e0; }
+    .track-card-board-empty {
+      font-size: 10px;
+      letter-spacing: 1.5px;
+      color: #6b7689;
+      font-style: italic;
+    }
 
     .trans-row {
       display: flex;

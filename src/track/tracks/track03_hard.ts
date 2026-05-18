@@ -30,13 +30,15 @@ const GAP_LONG = 7;              // second jump (harder)
 const SLANT = Math.PI / 9;       // 20° peak roll on each S-curve half
 const LOOP_LEN = 30;
 const LOOP_ADVANCE = 75;         // length/advance = 0.4 → max pitch ≈ 22°
-const TIME_BONUS = 4.5;
+const TIME_BONUS = 5.5;
 
 export const trackGauntlet: TrackDef = {
   id: 'gauntlet',
   name: 'The Gauntlet',
   difficulty: 'hard',
-  startCountdownSec: 36,
+  startCountdownSec: 50,
+  totalLaps: 3,
+  lapBonusSec: 16,
   spawnY: 1.0, // TrackBuilder normalises
   closedLoop: true,
   segments: [

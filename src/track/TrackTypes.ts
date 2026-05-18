@@ -52,6 +52,11 @@ export interface TrackDef {
   difficulty: 'easy' | 'medium' | 'hard';
   /** Initial countdown value (seconds). */
   startCountdownSec: number;
+  /** Number of laps required to finish the race. Defaults to 3. */
+  totalLaps?: number;
+  /** Time (seconds) added when crossing the finish/start line on a non-final
+   *  lap. Lets the timer accumulate across laps. Defaults to 0. */
+  lapBonusSec?: number;
   /** Spawn elevation (metres). Defaults to 1. */
   spawnY?: number;
   segments: Segment[];

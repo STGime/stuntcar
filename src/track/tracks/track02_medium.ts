@@ -32,13 +32,15 @@ const RAMP_L = 5;
 const GAP_L = 5;
 const LOOP_LEN = 30;            // loop circumference (radius ≈ 4.77 m, apex 9.55 m)
 const LOOP_ADVANCE = 60;        // length/advance = 0.5 → max pitch ≈ 26.6°
-const TIME_BONUS = 5.0;
+const TIME_BONUS = 6.0;
 
 export const trackLoopback: TrackDef = {
   id: 'loopback',
   name: 'Loopback',
   difficulty: 'medium',
-  startCountdownSec: 32,
+  startCountdownSec: 45,
+  totalLaps: 3,
+  lapBonusSec: 14,
   spawnY: 1.0, // TrackBuilder normalises anyway
   closedLoop: true,
   segments: [
