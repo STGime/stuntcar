@@ -29,14 +29,15 @@ export class Engine {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    // Warmer late-afternoon sky. Fog matches so distant fade reads as haze
-    // rather than a wall — the circuit's far side blends into the horizon.
-    // Range tightened (120-480 vs 180-500) for more atmospheric depth.
-    const skyColor = 0xc8b491;
-    this.scene.background = new THREE.Color(skyColor);
-    this.scene.fog = new THREE.Fog(skyColor, 120, 480);
+    // Background + fog are set by `buildScene` from the active weather
+    // preset so they always match the active sky.
 
     window.addEventListener('resize', () => this.handleResize());
+  }
+
+  /** Renderer tonemap exposure — overridden by the weather preset. */
+  setExposure(v: number): void {
+    this.renderer.toneMappingExposure = v;
   }
 
   setCamera(camera: THREE.PerspectiveCamera): void {

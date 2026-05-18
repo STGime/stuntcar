@@ -383,6 +383,11 @@ function buildStripMeshes(
   // Combine all strips into a single trimesh collider — cheaper than one per strip.
   const allPositions: number[] = [];
   const allIndices: number[] = [];
+  // Skirts live in their OWN trimesh so the off-track detector (which
+  // checks against the ribbon collider's handle) doesn't treat a wheel
+  // riding the skirt slope as "on track".
+  const skirtAllPos: number[] = [];
+  const skirtAllIdx: number[] = [];
 
   // For closed loops we skip the cap at the start/finish seam (first strip's
   // start and last strip's end) and add wrap-around triangles instead, so
@@ -660,6 +665,12 @@ function buildStripMeshes(
     appendToCollider(allPositions, allIndices, bottomPositions, bottomIndices);
     appendToCollider(allPositions, allIndices, sidePositions, sideIndices);
     appendToCollider(allPositions, allIndices, capPositions, capIndices);
+
+    // Skirts join a separate collider so the car can't drive THROUGH the
+    // dirt walls but riding their slope still counts as off-track.
+    appendToCollider(skirtAllPos, skirtAllIdx, leftSkirtPos, leftSkirtIdx);
+    appendToCollider(skirtAllPos, skirtAllIdx, rightSkirtPos, rightSkirtIdx);
+    appendToCollider(skirtAllPos, skirtAllIdx, skirtCapPos, skirtCapIdx);
   }
 
   // No wrap-around triangles needed — the closed-loop snap (done in
@@ -670,13 +681,28 @@ function buildStripMeshes(
   if (allPositions.length === 0) return null;
 
   const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  return world.createCollider(
+  const ribbonCollider = world.createCollider(
     RAPIER.ColliderDesc.trimesh(
       new Float32Array(allPositions),
       new Uint32Array(allIndices),
     ).setFriction(1.1),
     body,
   );
+
+  // Separate trimesh for the earth skirts. Same fixed body — they're
+  // immovable scenery — but a different collider handle so we can tell
+  // ribbon-hits and skirt-hits apart in raycasts.
+  if (skirtAllPos.length > 0) {
+    world.createCollider(
+      RAPIER.ColliderDesc.trimesh(
+        new Float32Array(skirtAllPos),
+        new Uint32Array(skirtAllIdx),
+      ).setFriction(0.85),
+      body,
+    );
+  }
+
+  return ribbonCollider;
 }
 
 function pushCap(

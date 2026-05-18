@@ -5,6 +5,7 @@ import { PhysicsWorld } from './core/PhysicsWorld';
 import { Input } from './core/Input';
 import { buildScene, SUN_OFFSET } from './world/Scene';
 import { scatterRoadsideProps } from './world/Props';
+import { WEATHER_PRESETS, loadWeather, type WeatherId } from './world/Weather';
 import { Car } from './vehicle/Car';
 import { CameraRig } from './camera/CameraRig';
 import { Hud } from './ui/Hud';
@@ -60,15 +61,20 @@ async function main(): Promise<void> {
   const trackIdx = Math.max(1, Math.min(TRACKS.length, parseInt(trackParam, 10) || 1)) - 1;
   const trackDef = trackByDevIndex(trackIdx);
   const transmission = params.get('trans') === 'manual' ? 'manual' : loadTransmission();
+  const weatherParam = params.get('weather') as WeatherId | null;
+  const weatherId: WeatherId =
+    weatherParam && weatherParam in WEATHER_PRESETS ? weatherParam : loadWeather();
+  const weather = WEATHER_PRESETS[weatherId];
 
   const engine = new Engine(container);
+  engine.setExposure(weather.exposure);
   const physics = await PhysicsWorld.create();
   const input = new Input();
 
-  const { sun } = buildScene(engine.scene, physics.world);
+  const { sun } = buildScene(engine.scene, physics.world, weather);
   const track = buildTrack(engine.scene, physics.world, trackDef);
   scatterRoadsideProps(engine.scene, physics.world, track, trackDef.id);
-  document.title = `STUNTLINE — ${trackDef.name}`;
+  document.title = 'STUNTLINE';
 
   const car = new Car(engine.scene, physics.world);
   car.drivetrain.setMode(transmission);

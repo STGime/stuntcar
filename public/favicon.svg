@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Dark rounded square -->
+  <rect width="64" height="64" rx="12" fill="#1a2030"/>
+  <!-- Yellow speed chevrons -->
+  <g fill="#ffd166" stroke="#0c1018" stroke-width="2" stroke-linejoin="round">
+    <polygon points="14,46 28,18 38,18 24,46"/>
+    <polygon points="30,46 44,18 54,18 40,46"/>
+  </g>
+  <!-- Teal underline -->
+  <rect x="12" y="50" width="40" height="4" rx="2" fill="#4fd1c5"/>
+</svg>

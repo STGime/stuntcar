@@ -1,5 +1,6 @@
 import { TRACKS } from '../track/tracks';
 import { loadLeaderboard } from '../race/Leaderboard';
+import { WEATHER_PRESETS, loadWeather, saveWeather, type WeatherId } from '../world/Weather';
 
 const TRANSMISSION_STORAGE_KEY = 'stuntline:transmission';
 
@@ -72,6 +73,7 @@ export class Menus {
 
   private renderTrackSelect(): void {
     const trans = loadTransmission();
+    const weather = loadWeather();
     const cards = TRACKS.map((track, idx) => {
       const best = loadBestTimeSec(track.id);
       const top = loadLeaderboard(track.id).slice(0, 3);
@@ -114,6 +116,17 @@ export class Menus {
             <button class="trans-opt ${trans === 'manual' ? 'active' : ''}" data-trans="manual">Manual</button>
           </div>
         </div>
+        <div class="trans-row">
+          <span class="trans-label">WEATHER</span>
+          <div class="trans-toggle" role="radiogroup">
+            ${(Object.values(WEATHER_PRESETS))
+              .map(
+                (w) =>
+                  `<button class="trans-opt ${weather === w.id ? 'active' : ''}" data-weather="${w.id}">${w.label}</button>`,
+              )
+              .join('')}
+          </div>
+        </div>
         <button class="menu-btn secondary" data-action="back">Back</button>
       </div>
     `;
@@ -128,10 +141,26 @@ export class Menus {
       }),
     );
 
+    let selectedWeather: WeatherId = weather;
+    const wxButtons = this.root.querySelectorAll<HTMLButtonElement>('[data-weather]');
+    wxButtons.forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.weather as WeatherId | undefined;
+        if (id && id in WEATHER_PRESETS) {
+          selectedWeather = id;
+          wxButtons.forEach((b) => b.classList.toggle('active', b === btn));
+          saveWeather(selectedWeather);
+        }
+      }),
+    );
+
     this.root.querySelectorAll<HTMLButtonElement>('[data-track]').forEach((card) => {
       card.addEventListener('click', () => {
         saveTransmission(selectedTrans);
-        navigate(`?track=${card.dataset.track}&trans=${selectedTrans}`);
+        saveWeather(selectedWeather);
+        navigate(
+          `?track=${card.dataset.track}&trans=${selectedTrans}&weather=${selectedWeather}`,
+        );
       });
     });
     this.root
