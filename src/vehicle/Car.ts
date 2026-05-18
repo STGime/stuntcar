@@ -47,6 +47,7 @@ export class Car {
   private readonly cockpitHidden: THREE.Object3D[] = [];
   private readonly cockpitOnly: THREE.Object3D[] = [];
   private readonly taillightMat: THREE.MeshStandardMaterial;
+  private readonly paintMaterials: THREE.MeshStandardMaterial[] = [];
   private steeringWheelMesh: THREE.Object3D | null = null;
 
   private steer = 0; // current (smoothed) steering angle, radians
@@ -100,9 +101,10 @@ export class Car {
 
     const paintMat = new THREE.MeshStandardMaterial({
       color: bodyColor,
-      metalness: 0.35,
-      roughness: 0.45,
+      metalness: 0.55,
+      roughness: 0.35,
     });
+    this.paintMaterials.push(paintMat);
     const trimMat = new THREE.MeshStandardMaterial({
       color: trim,
       metalness: 0.4,
@@ -282,6 +284,30 @@ export class Car {
     // Hide cockpit-only props by default (chase is the default view).
     for (const m of this.cockpitOnly) m.visible = false;
 
+    // Door number decals + side stripe — give the car a bit of identity.
+    const numberTex = makeNumberDecalTexture('07');
+    const numberMat = new THREE.MeshBasicMaterial({
+      map: numberTex,
+      transparent: true,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    for (const side of [-1, 1] as const) {
+      const door = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), numberMat);
+      door.position.set(side * (hx + 0.011), hy * 0.45, -0.1);
+      door.rotation.y = side === -1 ? -Math.PI / 2 : Math.PI / 2;
+      group.add(door);
+
+      // Side stripe — thin contrasting band along the lower body.
+      const stripe = new THREE.Mesh(
+        new THREE.PlaneGeometry(hz * 1.7, 0.08),
+        new THREE.MeshBasicMaterial({ color: 0xffd166, toneMapped: false }),
+      );
+      stripe.position.set(side * (hx + 0.008), -0.02, 0);
+      stripe.rotation.y = side === -1 ? -Math.PI / 2 : Math.PI / 2;
+      group.add(stripe);
+    }
+
     scene.add(group);
     this.chassisView = new BodyView(this.body, group);
 
@@ -345,6 +371,28 @@ export class Car {
   /** Number of wheels managed by the vehicle controller. */
   get wheelCount(): number {
     return CarConfig.wheels.length;
+  }
+
+  /** Apply a cube-map environment texture to the body paint so the chassis
+   *  picks up sky / horizon reflections. Caller controls intensity. */
+  applyEnvMap(envMap: THREE.Texture, intensity: number): void {
+    for (const m of this.paintMaterials) {
+      m.envMap = envMap;
+      m.envMapIntensity = intensity;
+      m.needsUpdate = true;
+    }
+  }
+
+  /** World-space position of the chassis origin — used for a cube probe. */
+  worldPosition(out: THREE.Vector3): THREE.Vector3 {
+    return out.copy(this.chassisView.object.position);
+  }
+
+  /** Toggle visibility of every chassis mesh — used while we render a
+   *  reflection cube map so the car doesn't see itself. */
+  setVisible(v: boolean): void {
+    this.chassisView.object.visible = v;
+    for (const m of this.wheelMeshes) m.visible = v;
   }
 
   /** Toggle wrecked state. While true, `update()` applies zero driving force. */
@@ -625,6 +673,33 @@ export class Car {
         .multiply(this.spinQuat);
     }
   }
+}
+
+function makeNumberDecalTexture(number: string): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return new THREE.CanvasTexture(canvas);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // White roundel.
+  ctx.fillStyle = '#f5f5ee';
+  ctx.beginPath();
+  ctx.arc(canvas.width / 2, canvas.height / 2, 100, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = '#0c1018';
+  ctx.stroke();
+  // Number itself.
+  ctx.fillStyle = '#0c1018';
+  ctx.font = 'bold 140px ui-monospace, "SF Mono", Menlo, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(number, canvas.width / 2, canvas.height / 2 + 8);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
 }
 
 export interface WheelSnapshot {

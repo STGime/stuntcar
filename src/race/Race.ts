@@ -53,6 +53,10 @@ export class Race {
   /** Fired when a lap is completed (i.e. finish line crossed before the
    *  final lap). Argument is the new lap number (2..totalLaps). */
   onLapComplete: (newLap: number) => void = () => {};
+  /** Fired on every gate pass (regular + lap-finish, but NOT the final
+   *  finish since the result modal supersedes any floater). Used by FX
+   *  systems to spawn a "+X.Xs" floater at the gate. */
+  onCheckpoint: (bonusSec: number, position: { x: number; y: number; z: number }) => void = () => {};
 
   constructor(
     private readonly def: TrackDef,
@@ -144,6 +148,7 @@ export class Race {
     const event = this.checkpoints.update(this.car.chassisBody);
     if (event) {
       this.timer.addBonus(event.timeBonusSec);
+      const marker = this.checkpoints.markerAt(event.index);
       if (event.isFinish) {
         if (this.currentLap < this.totalLaps) {
           // Lap completed but the race continues — wrap the gate cursor and
@@ -152,6 +157,7 @@ export class Race {
           this.timer.addBonus(this.lapBonusSec);
           this.checkpoints.resetForNextLap();
           this.onLapComplete(this.currentLap);
+          if (marker) this.onCheckpoint(this.lapBonusSec, marker.position);
         } else {
           // Final lap finished — record the result.
           this.finishTimeSec = this.timer.elapsed;
@@ -164,6 +170,8 @@ export class Race {
           this.timer.setPaused(true);
           return;
         }
+      } else if (marker) {
+        this.onCheckpoint(event.timeBonusSec, marker.position);
       }
     }
 

@@ -123,11 +123,73 @@ export class Checkpoints {
       // just outside the pylons. Vertices animate per render frame.
       if (m.isFinish) {
         this.addFinishFlags(group, halfW);
+      } else {
+        // Sponsor billboard beside non-finish gates.
+        this.addSponsorBillboard(group, halfW, idx);
       }
 
       scene.add(group);
       this.gates.push({ group, parts });
     }
+  }
+
+  /** Mount a sponsor billboard on a thin post, just outside one of the
+   *  pylons. The sponsor name + colour are picked deterministically from
+   *  the gate index so each track's sequence is stable across reloads. */
+  private addSponsorBillboard(
+    group: THREE.Group,
+    halfW: number,
+    idx: number,
+  ): void {
+    const sponsor = SPONSORS[idx % SPONSORS.length];
+    const side: 1 | -1 = idx % 2 === 0 ? 1 : -1;
+
+    const POST_HEIGHT = 3.6;
+    const PANEL_W = 3.2;
+    const PANEL_H = 1.5;
+    const offsetX = side * (halfW + 1.6);
+
+    const postMat = new THREE.MeshStandardMaterial({
+      color: 0x2a2f38,
+      metalness: 0.6,
+      roughness: 0.5,
+    });
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.08, POST_HEIGHT, 8),
+      postMat,
+    );
+    post.position.set(offsetX, POST_HEIGHT / 2, 0);
+    post.castShadow = true;
+    group.add(post);
+
+    const panelTex = makeSponsorTexture(sponsor);
+    const panelMat = new THREE.MeshBasicMaterial({
+      map: panelTex,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(PANEL_W, PANEL_H),
+      panelMat,
+    );
+    panel.position.set(offsetX, POST_HEIGHT + PANEL_H / 2 - 0.1, 0);
+    // Same orientation trick as the gate label — face oncoming traffic.
+    panel.rotation.y = Math.PI;
+    panel.castShadow = true;
+    group.add(panel);
+
+    // Painted backing so the rear of the panel doesn't look like a TV.
+    const backingMat = new THREE.MeshStandardMaterial({
+      color: 0x1c2028,
+      roughness: 0.7,
+    });
+    const backing = new THREE.Mesh(
+      new THREE.BoxGeometry(PANEL_W * 1.02, PANEL_H * 1.05, 0.06),
+      backingMat,
+    );
+    backing.position.copy(panel.position);
+    backing.position.z -= 0.04 * (Math.cos(panel.rotation.y));
+    group.add(backing);
   }
 
   /** Mount a flag pole + waving checker flag on each side of the finish gate. */
@@ -202,6 +264,11 @@ export class Checkpoints {
   /** The next-expected gate's marker, or `null` if the run is complete. */
   nextMarker(): CheckpointMarker | null {
     return this.nextIndex < this.total ? this.markers[this.nextIndex] : null;
+  }
+
+  /** Marker by index — used by FX systems that need a gate's world position. */
+  markerAt(index: number): CheckpointMarker | null {
+    return this.markers[index] ?? null;
   }
 
   /**
@@ -309,6 +376,67 @@ function makeLabelTexture(text: string, finish: boolean): THREE.CanvasTexture {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 4);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+interface Sponsor {
+  name: string;
+  /** Background colour. */
+  bg: string;
+  /** Foreground (text) colour. */
+  fg: string;
+  /** Optional accent stripe colour painted across the top. */
+  accent?: string;
+}
+
+const SPONSORS: Sponsor[] = [
+  { name: 'TURBO+',     bg: '#0f1a2e', fg: '#ffd166', accent: '#ff4f4f' },
+  { name: 'APEX FUEL',  bg: '#1a0d18', fg: '#ff6f4f', accent: '#ffd166' },
+  { name: 'VELOCITY',   bg: '#03222c', fg: '#4fd1c5', accent: '#ffffff' },
+  { name: 'IGNITE',     bg: '#2d1212', fg: '#ffb13a', accent: '#ffffff' },
+  { name: 'NIMBUS',     bg: '#0e1f1a', fg: '#9be15d', accent: '#4fd1c5' },
+  { name: 'VOLT RACE',  bg: '#16142e', fg: '#a98aff', accent: '#4fff8a' },
+  { name: 'HORIZON',    bg: '#241408', fg: '#ffe7b3', accent: '#ff6f4f' },
+  { name: 'STUNTLINE',  bg: '#1a2030', fg: '#ffd166', accent: '#4fd1c5' },
+];
+
+function makeSponsorTexture(s: Sponsor): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 240;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return new THREE.CanvasTexture(canvas);
+
+  // Background.
+  ctx.fillStyle = s.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Diagonal accent band for graphic flair.
+  if (s.accent) {
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate(-0.18);
+    ctx.fillStyle = s.accent;
+    ctx.globalAlpha = 0.25;
+    ctx.fillRect(-canvas.width, -40, canvas.width * 2, 80);
+    ctx.restore();
+  }
+
+  // Outer frame.
+  ctx.strokeStyle = s.fg;
+  ctx.lineWidth = 6;
+  ctx.strokeRect(6, 6, canvas.width - 12, canvas.height - 12);
+
+  // Sponsor name.
+  ctx.fillStyle = s.fg;
+  ctx.font = 'bold 96px ui-monospace, "SF Mono", Menlo, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(s.name, canvas.width / 2, canvas.height / 2);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;

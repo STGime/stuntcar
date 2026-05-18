@@ -19,7 +19,9 @@ import { ReplayRecorder } from './replay/ReplayRecorder';
 import { ReplayPlayer } from './replay/ReplayPlayer';
 import { ReplayCamera } from './replay/ReplayCamera';
 import { Menus, loadTransmission } from './ui/Menus';
+import { MiniMap } from './ui/MiniMap';
 import { SkidEffects } from './fx/SkidEffects';
+import { BonusFloaters } from './fx/BonusFloaters';
 
 const FIXED_DT = 1 / 60;
 const CRASH_REPLAY_SEC = 3.0;
@@ -75,12 +77,35 @@ async function main(): Promise<void> {
   engine.setCamera(camera.camera);
   engine.enablePostFX();
 
+  // One-shot cube probe at the car's spawn so the metallic body paint picks
+  // up sky + horizon reflections. The car is hidden during the render so it
+  // doesn't see itself. Sky / mountains are static so a single probe is
+  // enough — no per-frame cost.
+  {
+    const cubeRT = new THREE.WebGLCubeRenderTarget(256, {
+      generateMipmaps: true,
+      minFilter: THREE.LinearMipmapLinearFilter,
+    });
+    const cubeCam = new THREE.CubeCamera(0.5, 1000, cubeRT);
+    cubeCam.position.copy(track.spawn.position);
+    cubeCam.position.y += 1.2;
+    car.setVisible(false);
+    cubeCam.update(engine.renderer, engine.scene);
+    car.setVisible(true);
+    car.applyEnvMap(cubeRT.texture, 0.7);
+  }
+
   const hud = new Hud(document.body);
   hud.setResultCallbacks({ onRetry: gotoRetry, onTrackSelect: gotoTracks, onMenu: gotoMenu });
+  const miniMap = new MiniMap(document.body, track.centerline, {
+    x: track.spawn.position.x,
+    z: track.spawn.position.z,
+  });
 
   const engineSound = new EngineSound();
   const sfx = new Sfx();
   const skidFx = new SkidEffects(engine.scene);
+  const bonusFloaters = new BonusFloaters(engine.scene);
 
   const race = new Race(trackDef, track, car, engine.scene);
   race.onCountdownTick = (phase) => {
@@ -88,6 +113,7 @@ async function main(): Promise<void> {
     else if (phase !== null) sfx.shortBeep();
   };
   race.onLapComplete = () => sfx.longBeep();
+  race.onCheckpoint = (bonusSec, pos) => bonusFloaters.spawn(pos, bonusSec);
   race.start();
 
   // --- Replay plumbing -----------------------------------------------------
@@ -340,12 +366,20 @@ async function main(): Promise<void> {
       car.render(alpha);
       camera.update(car, frameDt);
       skidFx.update(frameDt);
+      bonusFloaters.update(frameDt, camera.camera.position);
       race.checkpoints.animate(performance.now() / 1000);
+      // Drive the speed-blur post pass. Ramps in past 120 km/h, full by 220.
+      const speedT = Math.max(0, Math.min(1, (car.speedKmh - 120) / 100));
+      engine.setSpeedFx(speedT);
+
+      const carPos = car.chassisView.object.position;
+
+      // Mini-map dot follows the chassis.
+      miniMap.update(carPos.x, carPos.z);
 
       // Slide the shadow camera along with the car so its tight frustum
       // always covers the area the player can see. The sun keeps its
       // world-space direction; only the focus point moves.
-      const carPos = car.chassisView.object.position;
       sun.target.position.set(carPos.x, 0, carPos.z);
       sun.position.set(carPos.x + SUN_OFFSET.x, SUN_OFFSET.y, carPos.z + SUN_OFFSET.z);
 

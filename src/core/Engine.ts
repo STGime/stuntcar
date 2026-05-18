@@ -51,6 +51,11 @@ export class Engine {
     this.postFX = new PostFX(this.renderer, this.scene, this.camera);
   }
 
+  /** Drive the speed-blur amount (0..1). Safe no-op if PostFX is disabled. */
+  setSpeedFx(t: number): void {
+    this.postFX?.setSpeedFx(t);
+  }
+
   private handleResize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;

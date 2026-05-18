@@ -6,7 +6,10 @@ corners, jumps, forward-helix loops, hills and valleys — against a
 countdown timer that's topped up at each checkpoint.
 
 Built incrementally from the spec in [STUNTLINE_MVP.md](./STUNTLINE_MVP.md).
-Milestones M0 through M10 are complete; see [Status](#status) below.
+Milestones M0 through M11 are complete; see [Status](#status) below.
+Post-MVP work added 3-lap races, an arcade-style high-score table, and
+a visual polish pass (shadows, bloom, layered mountains, roadside props,
+skid marks + dust, curbs, etc.).
 
 > Working title. The repository does **not** ship as "Stunt Car Racer" and
 > uses none of that game's branding, track names, vehicle names, or assets.
@@ -37,8 +40,10 @@ Requirements: **Node 18+** (developed on Node 22).
 Land on the page → **Main Menu** → **Start** → **Track Select** (3 tracks
 + Automatic/Manual transmission toggle) → 3-2-1-GO **countdown** →
 **Racing**. Reach each checkpoint in order before the timer hits zero;
-each gate adds time. Crossing the finish line records your time
-(persisted per-track in `localStorage`).
+each gate adds time. Each race is **3 laps**; crossing the finish line
+on the final lap records your total time. Beat the leaderboard's
+worst time and you enter a 3-letter arcade name; the per-track top 10
+is persisted in `localStorage`.
 
 ### Controls
 
@@ -59,15 +64,28 @@ each gate adds time. Crossing the finish line records your time
 ### What you'll see
 
 - **Cockpit dashboard**: analogue rev counter + speedometer (SVG), gear
-  letter, transmission mode, `LIMIT` warning at the redline.
-- **Race bar** (top): countdown timer (turns red in the last 5 s), CP
-  counter (`CP 2/4`), `WRECKED` badge during the crash tumble.
+  letter, transmission mode, `LIMIT` warning at the redline, plus a
+  steering wheel that turns with input (cockpit view only).
+- **Race bar** (top): timer in `M:SS.s`, `LAP X/3`, CP counter,
+  `WRECKED` badge during crash tumbles. A "LAP 2" / "FINAL LAP" banner
+  flashes mid-screen on each lap change.
 - **Forward-helix loops** on Tracks 2 and 3: tangent-aligned so the
   chassis stays upright through the apex (no Rapier raycast-suspension
   upside-down issues).
 - **Cinematic replays** on crashes and on long-airtime jumps (>1.2 s).
 - **Off-track countdown**: drive off the ribbon and you've got 5 s to
   return before you're respawned at the last checkpoint.
+- **Arcade high-score table**: top 10 per track, 3-letter names,
+  surfaced on the result screen + on each Track Select card.
+- **Driving feedback**: rubber skid marks + grey tire smoke on
+  hard cornering / heavy braking on tarmac; warm dust puffs from
+  wheels touching grass off-track.
+- **Polished world**: tight-frustum dynamic shadow that follows the
+  car, ACES-tonemapped golden-hour lighting, a layered hazy mountain
+  ridge ring, ~220 seeded roadside props (pines / boulders / bushes),
+  red-white curbs on turns and banked corners, gate banners labelled
+  `CP N` / `FINISH`, two waving checkered flags at the finish line,
+  and an UnrealBloom-driven sun disc + emissive halo.
 
 ---
 
@@ -80,8 +98,8 @@ each gate adds time. Crossing the finish line records your time
 | 3 | The Gauntlet | hard | Closed loop. Two jumps with valleys, narrow + banked S-curve, forward-helix loop. |
 
 Each track is a closed circuit: cross the start line, drive a lap, cross
-the finish line (= start line). Per-track best times live in
-`localStorage`.
+the finish line (= start line). Each race is **3 laps**. Per-track
+best times AND the top-10 arcade leaderboard live in `localStorage`.
 
 ---
 
@@ -99,34 +117,42 @@ src/
     PhysicsWorld.ts          Rapier WASM init + world wrapper
     Input.ts                 keyboard: held state + edge-press callbacks
     BodyView.ts              rigid body ↔ Three.js, transform interpolation
+    PostFX.ts                EffectComposer (Render → UnrealBloom → Output)
   world/
-    Scene.ts                 sky dome, sun, hemisphere light, ground + grid
+    Scene.ts                 sky dome (with sun disc), lighting, ground + grid
+    Mountains.ts             three layered ridge silhouette rings on the horizon
+    Props.ts                 seeded instanced trees / boulders / bushes scatter
   vehicle/
     Car.ts                   chassis + DynamicRayCastVehicleController + visuals
+                             (incl. steering wheel that rotates with input)
     CarConfig.ts             tunable constants (mass, torque, suspension, gears…)
     Drivetrain.ts            RPM model, torque curve, manual/automatic transmission
   track/
     TrackTypes.ts            Segment / Checkpoint / TrackDef
-    TrackBuilder.ts          walks the segment list → ribbon + Rapier trimesh
+    TrackBuilder.ts          walks the segment list → ribbon + skirts + curbs
+                             + centre stripe + Rapier trimesh + centerline samples
     tracks/                  track01_easy.ts, track02_medium.ts, track03_hard.ts
   race/
-    Race.ts                  race state machine (countdown / racing / timeup / finished)
-    RaceTimer.ts             countdown + per-gate bonus
-    Checkpoints.ts           ordered gate detection (position-based AABB)
+    Race.ts                  state machine + 3-lap wrap (countdown / racing / timeup / finished)
+    RaceTimer.ts             countdown + per-gate bonus + lap bonus
+    Checkpoints.ts           ordered gate detection, banner labels, finish flags
     CrashSystem.ts           kill-plane + tipped-stuck triggers, fires onCrash
     OffTrackDetector.ts      5 s grace countdown when wheels leave the ribbon
+    Leaderboard.ts           per-track top-10 (name + time) in localStorage
   replay/
     ReplayRecorder.ts        12 s ring buffer (per fixed step)
     ReplayPlayer.ts          real-time playback with onComplete callback
     ReplayCamera.ts          slow orbit cinematic camera
+  fx/
+    SkidEffects.ts           skid-mark + smoke/dust ring buffers (GPU-resident)
   camera/
     CameraRig.ts             chase + cockpit + trauma-based shake
   audio/
     EngineSound.ts           procedural engine drone + wind whoosh (Web Audio)
     Sfx.ts                   procedural one-shots: beep / chime / thud
   ui/
-    Hud.ts                   SVG dashboard + race bar + result modal + overlays
-    Menus.ts                 Main Menu + Track Select screens
+    Hud.ts                   SVG dashboard + race bar + result modal + name entry
+    Menus.ts                 Main Menu + Track Select (with leaderboard preview)
 ```
 
 ### Notable design decisions
@@ -163,34 +189,69 @@ src/
 
 ## Status
 
-All MVP milestones from the spec (M0–M10) are complete:
+All MVP milestones from the spec (M0–M10) plus the visual-polish pass
+(M11) are complete:
 
 | # | What |
 |---|---|
-| M0 | Vite + TS + Three.js scaffold, fixed-step game loop |
-| M1 | Rapier physics with render interpolation |
-| M2 | Drivable raycast-vehicle car |
-| M3 | RPM drivetrain + transmission + SVG dashboard + engine sound |
-| M4 | Data-driven TrackBuilder + Track 1 |
-| M5 | Checkpoints + race timer + result modal + best-time persistence |
-| M6 | Crash detection + recovery |
-| M7 | Replay system (crash + highlight) |
-| M8 | Tracks 2 & 3 (loop + corkscrew vocabulary) |
-| M9 | Main Menu / Track Select / Countdown / Result flow |
+| M0  | Vite + TS + Three.js scaffold, fixed-step game loop |
+| M1  | Rapier physics with render interpolation |
+| M2  | Drivable raycast-vehicle car |
+| M3  | RPM drivetrain + transmission + SVG dashboard + engine sound |
+| M4  | Data-driven TrackBuilder + Track 1 |
+| M5  | Checkpoints + race timer + result modal + best-time persistence |
+| M6  | Crash detection + recovery |
+| M7  | Replay system (crash + highlight) |
+| M8  | Tracks 2 & 3 (loop + corkscrew vocabulary) |
+| M9  | Main Menu / Track Select / Countdown / Result flow |
 | M10 | Better chassis model, camera shake, atmospheric sky, wind sound, CREDITS.md |
+| M11 | Visual polish: shadows, color grade, mountains, props, skid + dust, bloom, banners + flags, curbs, steering wheel |
 
 Post-MVP additions:
 - All three tracks reworked into **closed-loop circuits** with start =
   finish line, distinguished features (hills/jumps/valleys/loops/narrows)
   per side, and seamless ribbon closure.
+- **3-lap races**: each race is now 3 laps with a `LAP X/3` indicator,
+  a mid-screen "LAP 2" / "FINAL LAP" banner, and a per-lap timer
+  bonus on each finish-line crossing.
+- **Arcade high-score table**: per-track top 10, 3-letter names
+  (A-Z 0-9), surfaced on the result modal + Track Select cards.
 - **Earth skirts**: dirt walls extending from the slab's bottom edges
   down to the ground with a vertex-colour gradient (fakes ambient
-  occlusion at the hill/ground crease) and an outward taper, so tracks
-  read as sitting on hills rather than floating on stilts.
+  occlusion at the hill/ground crease) and an outward taper.
 - **Yellow centre stripe** along each track for depth cues over bumps.
 - **Off-track 5 s auto-respawn** with red-border flash + per-second beep.
 - **Tipped-over wreck** triggers at any tilt past ~73° (so chassis on
   its side, not just upside-down, gets the crash + reset).
+
+### M11 polish pass
+
+- **Dynamic shadow mapping** — tight 70 m frustum on a 2048² shadow
+  map; the camera + target slide with the car each frame so shadows
+  stay sharp wherever you're driving.
+- **ACES filmic tonemapping** + golden-hour palette (cool sky-fill /
+  warm sun + dirt bounce); fog tightened to 120–480 m for depth.
+- **UnrealBloom** post-FX on emissive geometry (brake lights, sun
+  disc, gauges) — gentle (strength 0.25 / threshold 0.85) so the
+  scene stays crisp.
+- **Sun disc + halo** baked into the sky shader, aligned with the
+  directional sun.
+- **Three-layer mountain ridge ring** (270 / 360 / 440 m radii) with
+  seeded sum-of-sines profile and fog-driven atmospheric perspective.
+- **Roadside props**: ~220 instanced pines / boulders / bushes per
+  track, seeded per `trackDef.id`, rejected via centerline-distance
+  check so nothing pokes through the ribbon.
+- **Tire skid marks + tire smoke** on hard cornering / heavy braking,
+  per-wheel GPU ring buffer (600 marks, 240 puffs) with shader-driven
+  fades.
+- **Off-road dust**: warm brown puffs from each wheel touching grass.
+- **Per-gate banner**: canvas-textured "CP N" / "FINISH" label under
+  every beam, oriented toward oncoming traffic.
+- **Waving checkered flags** at the finish line — two cloth panels on
+  metal poles, vertex-deformed each frame with stacked sines.
+- **Red/white curbs** painted on the inside edge of every turn or
+  banked corner.
+- **Steering wheel** mesh inside the cockpit that rotates with input.
 
 ---
 
