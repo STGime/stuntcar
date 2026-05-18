@@ -149,7 +149,9 @@ async function main(): Promise<void> {
 
   // --- Key bindings --------------------------------------------------------
   input.onPress('KeyC', () => {
-    if (!replayPlayer.active) camera.toggleView();
+    if (replayPlayer.active) return;
+    camera.toggleView();
+    car.setCockpitView(camera.isCockpit);
   });
   input.onPress('KeyR', () => {
     if (replayPlayer.active) return;

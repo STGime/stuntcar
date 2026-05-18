@@ -275,7 +275,7 @@ export class Hud {
       this.offTrackEl.style.display = 'none';
     }
 
-    if (r.state === 'racing') {
+    if (r.state === 'racing' || r.state === 'countdown') {
       this.modal.style.display = 'none';
       return;
     }

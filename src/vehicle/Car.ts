@@ -44,6 +44,8 @@ export class Car {
   private readonly body: RAPIER.RigidBody;
   private readonly controller: RAPIER.DynamicRayCastVehicleController;
   private readonly wheelMeshes: THREE.Mesh[] = [];
+  private readonly cockpitHidden: THREE.Mesh[] = [];
+  private readonly taillightMat: THREE.MeshStandardMaterial;
 
   private steer = 0; // current (smoothed) steering angle, radians
 
@@ -104,10 +106,13 @@ export class Car {
       metalness: 0.4,
       roughness: 0.55,
     });
+    // Dark tinted glass for the exterior look. The windshield/rear window
+    // are simply hidden when the cockpit camera is active (see
+    // setCockpitView) so the player gets an unobstructed view ahead.
     const glassMat = new THREE.MeshStandardMaterial({
       color: glassColor,
-      metalness: 0.2,
-      roughness: 0.25,
+      metalness: 0.6,
+      roughness: 0.2,
     });
 
     // Main body slab (slightly narrower than the collider so the visual
@@ -129,44 +134,55 @@ export class Car {
     upper.castShadow = true;
     group.add(upper);
 
-    // Hood: a shorter, lower painted block at the front, gives the car a nose.
+    // Hood: a small painted bump at the very front. Kept compact so it
+    // doesn't dominate the cockpit-camera view — the player needs to see
+    // the track ahead.
     const hood = new THREE.Mesh(
-      new THREE.BoxGeometry(hx * 2 - 0.25, 0.35, hz * 0.55),
+      new THREE.BoxGeometry(hx * 2 - 0.5, 0.18, hz * 0.32),
       paintMat,
     );
-    hood.position.set(0, hy * 0.5 - 0.1, hz * 0.6);
+    hood.position.set(0, hy * 0.5 - 0.05, hz * 0.78);
     hood.castShadow = true;
     group.add(hood);
 
     // Cabin (windshield + roof). A sloped windshield is made by rotating the
     // front face — easiest is two pieces: angled windshield + flat roof.
+    // The cabin sits directly on the upper body's top face (no gap):
+    //   upper top = hy/2 + (hy*0.95)/2  ≈  0.4875 for hy=0.5
+    //   cabin half-height = 0.225  →  cabin centre = upper top + 0.225
+    const cabinHalfH = 0.225;
+    const upperTopY = hy / 2 + (hy * 0.95) / 2;
+    const cabinY = upperTopY + cabinHalfH;
     const cabin = new THREE.Mesh(
-      new THREE.BoxGeometry(hx * 2 - 0.35, 0.45, hz * 0.85),
+      new THREE.BoxGeometry(hx * 2 - 0.35, cabinHalfH * 2, hz * 0.85),
       paintMat,
     );
-    cabin.position.set(0, hy + 0.5, -0.25);
+    cabin.position.set(0, cabinY, -0.25);
     cabin.castShadow = true;
     group.add(cabin);
 
-    // Windshield (dark glass), angled forward.
+    // Windshield (dark glass), angled forward — anchored to the cabin so
+    // there's no air gap between glass and body.
     const windshield = new THREE.Mesh(
       new THREE.BoxGeometry(hx * 2 - 0.4, 0.6, 0.08),
       glassMat,
     );
-    windshield.position.set(0, hy + 0.5, hz * 0.2);
+    windshield.position.set(0, cabinY, hz * 0.2);
     windshield.rotation.x = -0.45; // tilt forward
     windshield.castShadow = true;
     group.add(windshield);
+    this.cockpitHidden.push(windshield);
 
     // Rear window (lighter tilt back).
     const rearWindow = new THREE.Mesh(
       new THREE.BoxGeometry(hx * 2 - 0.4, 0.5, 0.06),
       glassMat,
     );
-    rearWindow.position.set(0, hy + 0.5, -hz * 0.65);
+    rearWindow.position.set(0, cabinY, -hz * 0.65);
     rearWindow.rotation.x = 0.35;
     rearWindow.castShadow = true;
     group.add(rearWindow);
+    this.cockpitHidden.push(rearWindow);
 
     // Rear spoiler — two thin posts and a wing.
     const spoilerMat = new THREE.MeshStandardMaterial({
@@ -205,6 +221,7 @@ export class Car {
       emissiveIntensity: 0.5,
       roughness: 0.4,
     });
+    this.taillightMat = taillightMat;
     const headlightGeo = new THREE.BoxGeometry(0.45, 0.2, 0.1);
     const headlightL = new THREE.Mesh(headlightGeo, headlightMat);
     headlightL.position.set(-hx + 0.35, hy * 0.4, hz - 0.02);
@@ -262,6 +279,12 @@ export class Car {
       scene.add(wheelMesh);
       this.wheelMeshes.push(wheelMesh);
     }
+  }
+
+  /** Hide the windshield + rear window when the cockpit camera is active so
+   *  the player gets a clean, uniformly unobstructed view of the road. */
+  setCockpitView(active: boolean): void {
+    for (const m of this.cockpitHidden) m.visible = !active;
   }
 
   /** Toggle wrecked state. While true, `update()` applies zero driving force. */
@@ -369,6 +392,9 @@ export class Car {
     }
     this.drivenWheelsGrounded = drivenGrounded;
     this.airborne = !anyContact;
+
+    // Brake lights: pop the rear emissive when the brake key is held.
+    this.taillightMat.emissiveIntensity = useBrake ? 2.6 : 0.5;
 
     // Advance the vehicle: updates the chassis velocity from suspension,
     // engine force and brakes. Must run BEFORE world.step().

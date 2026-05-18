@@ -40,24 +40,29 @@ export const CarConfig = {
   highSpeedKmh: 130,
 
   // --- Braking -------------------------------------------------------------
-  brakeForce: 14,
+  // Per-wheel brake force fed to Rapier's vehicle controller. Sweet spot:
+  // strong enough to actually stop you, low enough that the chassis pitch
+  // from deceleration doesn't lift the rear wheels off the ground.
+  brakeForce: 45,
 
   // --- Drivetrain ----------------------------------------------------------
   idleRpm: 900,
   redlineRpm: 7000,
   /**
    * Engine torque (N·m) sampled across RPM. Linear interpolation between
-   * points. M10 tuning: slightly punchier midrange so launches feel more
-   * responsive and the car holds speed up hill ramps.
+   * points. We have no clutch model — RPM is locked to wheel speed — so a
+   * stopped car only ever sees the idle-RPM torque value. Idle is tuned to
+   * the sweet spot: enough wheel force to start on a steep hill, not so much
+   * that a full-throttle launch on flat ground wheelies the chassis backward.
    */
   torqueCurve: [
-    { rpm: 900, nm: 140 },
-    { rpm: 2000, nm: 270 },
-    { rpm: 3500, nm: 360 },
-    { rpm: 4500, nm: 390 },
-    { rpm: 5500, nm: 360 },
-    { rpm: 6500, nm: 280 },
-    { rpm: 7000, nm: 190 },
+    { rpm: 900, nm: 195 },
+    { rpm: 2000, nm: 340 },
+    { rpm: 3500, nm: 410 },
+    { rpm: 4500, nm: 430 },
+    { rpm: 5500, nm: 380 },
+    { rpm: 6500, nm: 290 },
+    { rpm: 7000, nm: 200 },
   ],
   /**
    * Gear ratios. Index 0 = reverse (negative), 1 = 1st, ..., 5 = 5th.

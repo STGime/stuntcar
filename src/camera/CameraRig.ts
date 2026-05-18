@@ -42,6 +42,10 @@ export class CameraRig {
     this.snapNextUpdate = true;
   }
 
+  get isCockpit(): boolean {
+    return this.mode === 'cockpit';
+  }
+
   /** Add to the camera's trauma value (caps at 1). Trauma squared = shake amplitude. */
   addTrauma(amount: number): void {
     this.trauma = Math.min(1, this.trauma + amount);
@@ -95,10 +99,12 @@ export class CameraRig {
         this.trauma = Math.max(0, this.trauma - dt * 1.1);
       }
     } else {
-      // Cockpit: rides with the car fully (rolls during loops).
+      // Cockpit: rides with the car fully (rolls during loops). Camera
+      // sits at driver-eye height, slightly behind centre — high enough
+      // to see comfortably over the hood toward the road ahead.
       this.fwd.set(0, 0, 1).applyQuaternion(carQuat);
       this.camera.up.set(0, 1, 0).applyQuaternion(carQuat);
-      this.desired.set(0, 0.55, 0.1).applyQuaternion(carQuat).add(carPos);
+      this.desired.set(0, 0.85, -0.15).applyQuaternion(carQuat).add(carPos);
       this.camera.position.copy(this.desired);
       this.lookAt.copy(this.desired).addScaledVector(this.fwd, 10);
       this.camera.lookAt(this.lookAt);
