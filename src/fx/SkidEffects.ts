@@ -44,8 +44,12 @@ export class SkidEffects {
   private readonly smokePosAttr: THREE.Float32BufferAttribute;
   private readonly smokeSpawnAttr: THREE.Float32BufferAttribute;
   private readonly smokeSizeAttr: THREE.Float32BufferAttribute;
+  private readonly smokeColorAttr: THREE.Float32BufferAttribute;
   private smokeIndex = 0;
   private readonly smokeTimeUniform = { value: 0 };
+  // Tint constants for the two surface types.
+  private static readonly RUBBER_COLOR: [number, number, number] = [0.78, 0.76, 0.72];
+  private static readonly DIRT_COLOR: [number, number, number] = [0.62, 0.46, 0.28];
 
   // Scratch vectors so we don't allocate per emit.
   private readonly tmpFwd = new THREE.Vector3();
@@ -118,6 +122,7 @@ export class SkidEffects {
     const smokePos = new Float32Array(SMOKE_CAPACITY * 3);
     const smokeSpawn = new Float32Array(SMOKE_CAPACITY);
     const smokeSize = new Float32Array(SMOKE_CAPACITY);
+    const smokeColor = new Float32Array(SMOKE_CAPACITY * 3);
     for (let i = 0; i < SMOKE_CAPACITY; i++) smokeSpawn[i] = -1000;
 
     this.smokePosAttr = new THREE.Float32BufferAttribute(smokePos, 3);
@@ -126,11 +131,14 @@ export class SkidEffects {
     this.smokeSpawnAttr.setUsage(THREE.DynamicDrawUsage);
     this.smokeSizeAttr = new THREE.Float32BufferAttribute(smokeSize, 1);
     this.smokeSizeAttr.setUsage(THREE.DynamicDrawUsage);
+    this.smokeColorAttr = new THREE.Float32BufferAttribute(smokeColor, 3);
+    this.smokeColorAttr.setUsage(THREE.DynamicDrawUsage);
 
     this.smokeGeo = new THREE.BufferGeometry();
     this.smokeGeo.setAttribute('position', this.smokePosAttr);
     this.smokeGeo.setAttribute('aSpawn', this.smokeSpawnAttr);
     this.smokeGeo.setAttribute('aSize', this.smokeSizeAttr);
+    this.smokeGeo.setAttribute('aColor', this.smokeColorAttr);
     this.smokeGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
 
     const smokeMat = new THREE.ShaderMaterial({
@@ -145,10 +153,12 @@ export class SkidEffects {
       vertexShader: `
         attribute float aSpawn;
         attribute float aSize;
+        attribute vec3 aColor;
         uniform float uTime;
         uniform float uLifetime;
         uniform float uPixelScale;
         varying float vAlpha;
+        varying vec3 vColor;
         void main() {
           float age = uTime - aSpawn;
           float t = clamp(age / uLifetime, 0.0, 1.0);
@@ -156,6 +166,7 @@ export class SkidEffects {
           float growth = 1.0 + t * 2.4;
           float alpha = (1.0 - t) * (1.0 - t);
           vAlpha = alpha * step(0.0, age);
+          vColor = aColor;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mv;
           // Size shrinks with depth so distant puffs don't dominate.
@@ -164,13 +175,14 @@ export class SkidEffects {
       `,
       fragmentShader: `
         varying float vAlpha;
+        varying vec3 vColor;
         void main() {
           // Soft radial falloff for the puff.
           vec2 uv = gl_PointCoord * 2.0 - 1.0;
           float r2 = dot(uv, uv);
           if (r2 > 1.0) discard;
           float soft = smoothstep(1.0, 0.0, r2);
-          gl_FragColor = vec4(0.78, 0.76, 0.72, vAlpha * soft * 0.55);
+          gl_FragColor = vec4(vColor, vAlpha * soft * 0.55);
         }
       `,
     });
@@ -255,19 +267,50 @@ export class SkidEffects {
     this.markPosAttr.needsUpdate = true;
     this.markSpawnAttr.needsUpdate = true;
 
-    // --- Spawn a smoke puff ---------------------------------------------
-    const smSlot = this.smokeIndex;
+    // --- Spawn a tire-smoke puff ----------------------------------------
+    this.spawnPuff(contact, 0.25, 0.6 + intensity * 0.9, SkidEffects.RUBBER_COLOR);
+  }
+
+  /**
+   * Brown dust puff at a wheel contact — emitted when the wheel is touching
+   * dirt/grass rather than tarmac. No skid mark (rubber wouldn't streak on
+   * dirt the same way), just a kicked-up cloud.
+   */
+  emitDust(
+    contact: { x: number; y: number; z: number },
+    intensity: number,
+  ): void {
+    this.spawnPuff(
+      contact,
+      0.18,
+      0.55 + Math.min(1, intensity) * 0.7,
+      SkidEffects.DIRT_COLOR,
+    );
+  }
+
+  private spawnPuff(
+    contact: { x: number; y: number; z: number },
+    yOffset: number,
+    size: number,
+    color: readonly [number, number, number],
+  ): void {
+    const slot = this.smokeIndex;
     this.smokeIndex = (this.smokeIndex + 1) % SMOKE_CAPACITY;
     const sp = this.smokePosAttr.array as Float32Array;
     const ss = this.smokeSpawnAttr.array as Float32Array;
     const sz = this.smokeSizeAttr.array as Float32Array;
-    sp[smSlot * 3 + 0] = contact.x;
-    sp[smSlot * 3 + 1] = contact.y + 0.25;
-    sp[smSlot * 3 + 2] = contact.z;
-    ss[smSlot] = this.elapsed;
-    sz[smSlot] = 0.6 + intensity * 0.9;
+    const sc = this.smokeColorAttr.array as Float32Array;
+    sp[slot * 3 + 0] = contact.x;
+    sp[slot * 3 + 1] = contact.y + yOffset;
+    sp[slot * 3 + 2] = contact.z;
+    ss[slot] = this.elapsed;
+    sz[slot] = size;
+    sc[slot * 3 + 0] = color[0];
+    sc[slot * 3 + 1] = color[1];
+    sc[slot * 3 + 2] = color[2];
     this.smokePosAttr.needsUpdate = true;
     this.smokeSpawnAttr.needsUpdate = true;
     this.smokeSizeAttr.needsUpdate = true;
+    this.smokeColorAttr.needsUpdate = true;
   }
 }

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
 import { Engine } from './core/Engine';
 import { PhysicsWorld } from './core/PhysicsWorld';
 import { Input } from './core/Input';
@@ -148,6 +149,9 @@ async function main(): Promise<void> {
   const tmpRight = new THREE.Vector3();
   const tmpQuat = new THREE.Quaternion();
   const tmpLinvel = new THREE.Vector3();
+  const wheelRayOrigin = { x: 0, y: 0, z: 0 };
+  const wheelRayDir = { x: 0, y: -1, z: 0 };
+  let dustFrame = 0;
 
   // --- Audio start gesture -------------------------------------------------
   const startAudioOnce = (): void => {
@@ -226,10 +230,10 @@ async function main(): Promise<void> {
       crashSystem.update(dt);
       offTrack.update(dt);
 
-      // Tire skid marks + smoke. Detect "tire would lose grip" via the
-      // chassis's lateral velocity (cornering past grip) or a heavy-brake
-      // condition at speed. Spawn FX only at wheels actually touching the
-      // ground so airborne stunts stay clean.
+      // Tire skid marks + smoke + off-road dust. Per wheel:
+      //   - on-track + slipping (lateral or hard brake)  → skid mark + grey smoke
+      //   - off-track at speed                            → brown dust puff
+      // Airborne wheels stay clean.
       if (race.state === 'racing' && crashSystem.state === 'normal') {
         const linvel = car.chassisBody.linvel();
         const rotR = car.chassisBody.rotation();
@@ -243,15 +247,40 @@ async function main(): Promise<void> {
         const heavyBrake =
           input.isDown('ArrowDown', 'KeyS') && Math.abs(forward) > 11;
         const cornering = lateral > 4.2;
-        if (heavyBrake || cornering) {
-          const intensity = Math.min(
-            1,
-            Math.max((lateral - 3) / 6, heavyBrake ? speed / 35 : 0),
-          );
-          for (let i = 0; i < car.wheelCount; i++) {
-            const c = car.wheelContact(i);
-            if (!c) continue;
-            skidFx.emit(c, rotR, intensity);
+        const slipIntensity = Math.min(
+          1,
+          Math.max((lateral - 3) / 6, heavyBrake ? speed / 35 : 0),
+        );
+        // Dust is emitted every other physics tick per wheel to keep the
+        // ring buffer from churning when all four wheels are off track.
+        dustFrame++;
+        for (let i = 0; i < car.wheelCount; i++) {
+          const c = car.wheelContact(i);
+          if (!c) continue;
+          // Is THIS wheel on the track? A short ray from just above the
+          // contact looks for the track collider. Excluding the chassis
+          // ensures the ray doesn't bounce off the car itself.
+          let onTrack = true;
+          if (track.collider) {
+            wheelRayOrigin.x = c.x;
+            wheelRayOrigin.y = c.y + 0.12;
+            wheelRayOrigin.z = c.z;
+            const ray = new RAPIER.Ray(wheelRayOrigin, wheelRayDir);
+            const hit = physics.world.castRay(
+              ray,
+              0.4,
+              true,
+              undefined,
+              undefined,
+              car.chassisCollider,
+              car.chassisBody,
+            );
+            onTrack = !!hit && hit.collider.handle === track.collider.handle;
+          }
+          if (onTrack) {
+            if (heavyBrake || cornering) skidFx.emit(c, rotR, slipIntensity);
+          } else if (speed > 4 && (dustFrame + i) % 2 === 0) {
+            skidFx.emitDust(c, Math.min(1, speed / 22));
           }
         }
       }
