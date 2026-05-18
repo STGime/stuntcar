@@ -68,10 +68,17 @@ interface CrossSection {
  * segments. Builds a Three.js mesh for each strip and one Rapier `trimesh`
  * fixed-body collider for the whole track.
  */
+export interface BuildTrackOptions {
+  /** True when the active weather is rain — TrackBuilder darkens + glosses
+   *  the ribbon top and lowers the trimesh collider friction. */
+  wet?: boolean;
+}
+
 export function buildTrack(
   scene: THREE.Scene,
   world: RAPIER.World,
   def: TrackDef,
+  options: BuildTrackOptions = {},
 ): BuiltTrack {
   const pos = new THREE.Vector3(0, def.spawnY ?? 1, 0);
   const quat = new THREE.Quaternion();
@@ -302,7 +309,13 @@ export function buildTrack(
     }
   }
 
-  const collider = buildStripMeshes(scene, world, strips, def.closedLoop ?? false);
+  const collider = buildStripMeshes(
+    scene,
+    world,
+    strips,
+    def.closedLoop ?? false,
+    options.wet ?? false,
+  );
 
   return { spawn, checkpoints, finish, minY, collider, centerline };
 }
@@ -331,11 +344,14 @@ function buildStripMeshes(
   world: RAPIER.World,
   strips: CrossSection[][],
   closedLoop: boolean,
+  wet: boolean,
 ): RAPIER.Collider | null {
+  // Wet ribbon: darker, glossier (lower roughness + a touch of metalness) so
+  // the directional sun + sky reflection read as a damp sheen.
   const topMat = new THREE.MeshStandardMaterial({
-    color: 0x5a6680,
-    roughness: 0.7,
-    metalness: 0.05,
+    color: wet ? 0x2f3848 : 0x5a6680,
+    roughness: wet ? 0.28 : 0.7,
+    metalness: wet ? 0.35 : 0.05,
   });
   const sideMat = new THREE.MeshStandardMaterial({
     color: 0x2c3340,
@@ -685,7 +701,7 @@ function buildStripMeshes(
     RAPIER.ColliderDesc.trimesh(
       new Float32Array(allPositions),
       new Uint32Array(allIndices),
-    ).setFriction(1.1),
+    ).setFriction(wet ? 0.78 : 1.1),
     body,
   );
 

@@ -47,9 +47,11 @@ export class SkidEffects {
   private readonly smokeColorAttr: THREE.Float32BufferAttribute;
   private smokeIndex = 0;
   private readonly smokeTimeUniform = { value: 0 };
-  // Tint constants for the two surface types.
-  private static readonly RUBBER_COLOR: [number, number, number] = [0.78, 0.76, 0.72];
-  private static readonly DIRT_COLOR: [number, number, number] = [0.62, 0.46, 0.28];
+  // Tint constants for the two surface types. Values are mild HDR so they
+  // stay readable against both bright day and dark night backgrounds when
+  // composited additively.
+  private static readonly RUBBER_COLOR: [number, number, number] = [1.05, 1.0, 0.95];
+  private static readonly DIRT_COLOR: [number, number, number] = [1.1, 0.78, 0.45];
 
   // Scratch vectors so we don't allocate per emit.
   private readonly tmpFwd = new THREE.Vector3();
@@ -144,7 +146,9 @@ export class SkidEffects {
     const smokeMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
-      blending: THREE.NormalBlending,
+      // Additive so puffs always brighten the framebuffer — guarantees
+      // visibility under the night preset's dark exposure.
+      blending: THREE.AdditiveBlending,
       uniforms: {
         uTime: this.smokeTimeUniform,
         uLifetime: { value: SMOKE_LIFETIME_SEC },

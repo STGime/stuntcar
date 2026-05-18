@@ -38,12 +38,13 @@ Requirements: **Node 18+** (developed on Node 22).
 ## How to play
 
 Land on the page → **Main Menu** → **Start** → **Track Select** (3 tracks
-+ Automatic/Manual transmission toggle) → 3-2-1-GO **countdown** →
-**Racing**. Reach each checkpoint in order before the timer hits zero;
-each gate adds time. Each race is **3 laps**; crossing the finish line
-on the final lap records your total time. Beat the leaderboard's
-worst time and you enter a 3-letter arcade name; the per-track top 10
-is persisted in `localStorage`.
++ Automatic/Manual transmission toggle + Weather selector) → 3-2-1-GO
+**countdown** → **Racing**. Reach each checkpoint in order before the
+timer hits zero; each gate adds time. Each race is **3 laps**; crossing
+the finish line on the final lap records your total time. Beat the
+leaderboard's worst time and you enter a 3-letter arcade name; the
+per-track top 10 is persisted in `localStorage`. A `← MENU` button
+sits in the top-left during a race to quit back to the main menu.
 
 ### Controls
 
@@ -81,11 +82,28 @@ is persisted in `localStorage`.
   hard cornering / heavy braking on tarmac; warm dust puffs from
   wheels touching grass off-track.
 - **Polished world**: tight-frustum dynamic shadow that follows the
-  car, ACES-tonemapped golden-hour lighting, a layered hazy mountain
-  ridge ring, ~220 seeded roadside props (pines / boulders / bushes),
-  red-white curbs on turns and banked corners, gate banners labelled
-  `CP N` / `FINISH`, two waving checkered flags at the finish line,
-  and an UnrealBloom-driven sun disc + emissive halo.
+  car, ACES-tonemapped lighting, a layered hazy mountain ridge ring,
+  ~220 seeded roadside props (pines / boulders / bushes), red-white
+  curbs on turns and banked corners, gate banners labelled `CP N` /
+  `FINISH`, two waving checkered flags at the finish line, sponsor
+  billboards alongside each checkpoint, env-mapped reflective body
+  paint, door-number decal + yellow side stripe, a `+X.Xs` bonus
+  floater on every gate pass, vignette + speed-driven radial blur,
+  chase-camera roll into corners, sustained tire screech audio, and
+  an UnrealBloom-driven sun disc + emissive halo.
+- **Mini-map** in the top-right showing the track centerline + a
+  yellow dot for the car.
+- **Weather presets** (selected on Track Select):
+  - **Day** — warm golden-hour.
+  - **Overcast** — soft grey-blue diffuse, dim sun.
+  - **Sunset** — low orange sun, purple sky top, fiery horizon.
+  - **Night** — black sky, moonlight, dashboard / brake lights bloom
+    hard, two `SpotLight` headlight beams illuminate the road ahead.
+  - **Rain** — grey overcast, slow falling rain, glossy wet ribbon,
+    ~30 % less wheel grip so corners drift.
+  - **Random** — picks a fresh preset each load.
+- **Easter egg on Track 1**: a small cottage inside the closed loop
+  with a blinking neon sign on its roof.
 
 ---
 
@@ -117,11 +135,14 @@ src/
     PhysicsWorld.ts          Rapier WASM init + world wrapper
     Input.ts                 keyboard: held state + edge-press callbacks
     BodyView.ts              rigid body ↔ Three.js, transform interpolation
-    PostFX.ts                EffectComposer (Render → UnrealBloom → Output)
+    PostFX.ts                EffectComposer (Render → UnrealBloom → SpeedFx → Output)
   world/
     Scene.ts                 sky dome (with sun disc), lighting, ground + grid
     Mountains.ts             three layered ridge silhouette rings on the horizon
     Props.ts                 seeded instanced trees / boulders / bushes scatter
+    Weather.ts               Day / Overcast / Sunset / Night / Rain presets + Random
+    Rain.ts                  LineSegments rain cloud that follows the car
+    HouseDecoration.ts       Track-1 Easter-egg cottage + blinking sign
   vehicle/
     Car.ts                   chassis + DynamicRayCastVehicleController + visuals
                              (incl. steering wheel that rotates with input)
@@ -145,14 +166,16 @@ src/
     ReplayCamera.ts          slow orbit cinematic camera
   fx/
     SkidEffects.ts           skid-mark + smoke/dust ring buffers (GPU-resident)
+    BonusFloaters.ts         "+X.Xs" billboards spawned on gate passes
   camera/
     CameraRig.ts             chase + cockpit + trauma-based shake
   audio/
     EngineSound.ts           procedural engine drone + wind whoosh (Web Audio)
     Sfx.ts                   procedural one-shots: beep / chime / thud
   ui/
-    Hud.ts                   SVG dashboard + race bar + result modal + name entry
-    Menus.ts                 Main Menu + Track Select (with leaderboard preview)
+    Hud.ts                   SVG dashboard + race bar + result modal + name entry + quit btn
+    Menus.ts                 Main Menu + Track Select (transmission + weather + leaderboard)
+    MiniMap.ts               Top-right SVG mini-map of the track centerline
 ```
 
 ### Notable design decisions
@@ -252,6 +275,43 @@ Post-MVP additions:
 - **Red/white curbs** painted on the inside edge of every turn or
   banked corner.
 - **Steering wheel** mesh inside the cockpit that rotates with input.
+
+### Post-M11 polish
+
+- **Weather presets** (Day / Overcast / Sunset / Night / Rain) with a
+  `Random` option that re-rolls each load. Each preset retunes sun
+  direction + colour, hemisphere bounce, sky shader uniforms, fog
+  tint + range and tonemap exposure. Choice persists via
+  `localStorage` + `?weather=...` URL param.
+- **Rain**: a `LineSegments` cloud of ~2000 falling streaks anchored
+  to the car, plus a glossy wet ribbon (darker + low-roughness +
+  metalness up) and ~30 % less wheel grip so corners drift.
+- **Night headlights** — two `SpotLight` cones mounted at the front
+  of the chassis, lit only under the Night preset.
+- **Sponsor billboards** beside every non-finish gate cycling through
+  8 procedural brands (TURBO+, APEX FUEL, VELOCITY, …).
+- **Env-mapped car paint** — one-shot 256² cube probe at scene-build
+  time gives the metallic body real sky / horizon reflections.
+- **Door-number decal + side stripe** on each flank of the car.
+- **Bonus floaters**: a "+X.Xs" green sprite pops at every gate as
+  you cross, rises, billboards, fades.
+- **Mini-map** in the top-right with the centerline + spawn dot + a
+  glowing yellow car dot.
+- **Vignette + radial blur at speed** — custom ShaderPass slotted
+  between bloom and OutputPass.
+- **Chase camera roll** — horizon tilts slightly into corners,
+  smoothed from chassis lateral velocity, capped at ±5.7°.
+- **Sustained tire screech** audio: bandpass-noise + bandpass-saw
+  graph gated by `setScreech(t)` from the slip threshold.
+- **Solid earth skirts**: dirt walls under the ribbon are now a
+  separate trimesh collider (distinct handle from the ribbon) so the
+  car can't drive through them, and the off-track detector still
+  treats riding them as off-road.
+- **Quit-to-menu button** in the HUD top-left.
+- **Easter egg on Track 1** — a tiny cottage at the centroid of the
+  closed loop with a blinking neon sign on its roof.
+- **Favicon + tab title** — `STUNTLINE` only, with a custom SVG icon
+  matching the brand palette.
 
 ---
 

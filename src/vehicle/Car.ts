@@ -48,6 +48,7 @@ export class Car {
   private readonly cockpitOnly: THREE.Object3D[] = [];
   private readonly taillightMat: THREE.MeshStandardMaterial;
   private readonly paintMaterials: THREE.MeshStandardMaterial[] = [];
+  private readonly headlights: THREE.SpotLight[] = [];
   private steeringWheelMesh: THREE.Object3D | null = null;
 
   private steer = 0; // current (smoothed) steering angle, radians
@@ -234,6 +235,29 @@ export class Car {
     headlightR.position.x = hx - 0.35;
     group.add(headlightR);
 
+    // SpotLight beams for the headlight casings. Default intensity is 0
+    // (off) — `setHeadlights(true)` turns them on for the night preset.
+    // Targets are children of the chassis group so the beams aim relative
+    // to the car instead of staying world-fixed.
+    for (const side of [-1, 1] as const) {
+      const beam = new THREE.SpotLight(
+        0xfff3c4,
+        0, // intensity (off until enabled)
+        35, // distance
+        0.55, // cone half-angle (~31°)
+        0.32, // penumbra (soft edge)
+        1.4, // decay
+      );
+      beam.position.set(side * (hx - 0.35), hy * 0.45, hz - 0.02);
+      const target = new THREE.Object3D();
+      target.position.set(side * (hx - 0.35), hy * 0.05, hz + 14);
+      group.add(beam);
+      group.add(target);
+      beam.target = target;
+      beam.castShadow = false; // separate shadow pass would be expensive
+      this.headlights.push(beam);
+    }
+
     const taillightGeo = new THREE.BoxGeometry(0.5, 0.18, 0.08);
     const taillightL = new THREE.Mesh(taillightGeo, taillightMat);
     taillightL.position.set(-hx + 0.35, hy * 0.4, -hz + 0.02);
@@ -380,6 +404,22 @@ export class Car {
       m.envMap = envMap;
       m.envMapIntensity = intensity;
       m.needsUpdate = true;
+    }
+  }
+
+  /** Turn the SpotLight headlight beams on/off (night-time use). */
+  setHeadlights(active: boolean): void {
+    for (const beam of this.headlights) {
+      beam.intensity = active ? 65 : 0;
+    }
+  }
+
+  /** Scale all four wheels' frictionSlip by `factor`. < 1 makes the car
+   *  slide in corners (used by the rain weather preset). */
+  setGripFactor(factor: number): void {
+    const base = CarConfig.frictionSlip;
+    for (let i = 0; i < CarConfig.wheels.length; i++) {
+      this.controller.setWheelFrictionSlip(i, base * factor);
     }
   }
 

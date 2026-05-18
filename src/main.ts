@@ -5,7 +5,14 @@ import { PhysicsWorld } from './core/PhysicsWorld';
 import { Input } from './core/Input';
 import { buildScene, SUN_OFFSET } from './world/Scene';
 import { scatterRoadsideProps } from './world/Props';
-import { WEATHER_PRESETS, loadWeather, type WeatherId } from './world/Weather';
+import { House } from './world/HouseDecoration';
+import {
+  WEATHER_PRESETS,
+  loadWeatherChoice,
+  resolveWeatherChoice,
+  type WeatherChoice,
+} from './world/Weather';
+import { Rain } from './world/Rain';
 import { Car } from './vehicle/Car';
 import { CameraRig } from './camera/CameraRig';
 import { Hud } from './ui/Hud';
@@ -61,10 +68,10 @@ async function main(): Promise<void> {
   const trackIdx = Math.max(1, Math.min(TRACKS.length, parseInt(trackParam, 10) || 1)) - 1;
   const trackDef = trackByDevIndex(trackIdx);
   const transmission = params.get('trans') === 'manual' ? 'manual' : loadTransmission();
-  const weatherParam = params.get('weather') as WeatherId | null;
-  const weatherId: WeatherId =
-    weatherParam && weatherParam in WEATHER_PRESETS ? weatherParam : loadWeather();
-  const weather = WEATHER_PRESETS[weatherId];
+  const weatherParam = params.get('weather') as WeatherChoice | null;
+  const validParam = weatherParam === 'random' || (weatherParam && weatherParam in WEATHER_PRESETS);
+  const weatherChoice: WeatherChoice = validParam ? (weatherParam as WeatherChoice) : loadWeatherChoice();
+  const weather = WEATHER_PRESETS[resolveWeatherChoice(weatherChoice)];
 
   const engine = new Engine(container);
   engine.setExposure(weather.exposure);
@@ -72,12 +79,33 @@ async function main(): Promise<void> {
   const input = new Input();
 
   const { sun } = buildScene(engine.scene, physics.world, weather);
-  const track = buildTrack(engine.scene, physics.world, trackDef);
+  const track = buildTrack(engine.scene, physics.world, trackDef, { wet: !!weather.wet });
   scatterRoadsideProps(engine.scene, physics.world, track, trackDef.id);
+  const rain = weather.rain ? new Rain(engine.scene) : null;
   document.title = 'STUNTLINE';
+
+  // Track 1 Easter-egg house at the circuit's centroid.
+  let easterEggHouse: House | null = null;
+  if (trackDef.id === 'skyline-run' && track.centerline.length > 0) {
+    let sumX = 0;
+    let sumZ = 0;
+    for (const c of track.centerline) {
+      sumX += c.x;
+      sumZ += c.z;
+    }
+    const cx = sumX / track.centerline.length;
+    const cz = sumZ / track.centerline.length;
+    easterEggHouse = new House(
+      engine.scene,
+      new THREE.Vector3(cx, 0, cz),
+      'CringeDad72 is the best!',
+    );
+  }
 
   const car = new Car(engine.scene, physics.world);
   car.drivetrain.setMode(transmission);
+  car.setHeadlights(weather.id === 'night');
+  if (weather.slipFactor !== undefined) car.setGripFactor(weather.slipFactor);
 
   const camera = new CameraRig();
   engine.setCamera(camera.camera);
@@ -379,6 +407,11 @@ async function main(): Promise<void> {
       skidFx.update(frameDt);
       bonusFloaters.update(frameDt, camera.camera.position);
       race.checkpoints.animate(performance.now() / 1000);
+      easterEggHouse?.update(performance.now() / 1000, camera.camera.position);
+      if (rain) {
+        const cp = car.chassisView.object.position;
+        rain.update(frameDt, cp.x, cp.z);
+      }
       // Drive the speed-blur post pass. Ramps in past 120 km/h, full by 220.
       const speedT = Math.max(0, Math.min(1, (car.speedKmh - 120) / 100));
       engine.setSpeedFx(speedT);

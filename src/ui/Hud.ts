@@ -92,6 +92,7 @@ export class Hud {
   private readonly countdownEl: HTMLElement;
   private readonly offTrackEl: HTMLElement;
   private readonly lapBannerEl: HTMLElement;
+  private readonly quitBtn: HTMLButtonElement;
   private readonly resultBtnRetry: HTMLButtonElement;
   private readonly resultBtnTracks: HTMLButtonElement;
   private readonly resultBtnMenu: HTMLButtonElement;
@@ -273,6 +274,13 @@ export class Hud {
     this.lapBannerEl.style.display = 'none';
     container.appendChild(this.lapBannerEl);
 
+    // Always-visible Quit button (top-left). Hooks up via setResultCallbacks.
+    this.quitBtn = document.createElement('button');
+    this.quitBtn.id = 'quit-btn';
+    this.quitBtn.textContent = '← MENU';
+    this.quitBtn.style.pointerEvents = 'auto';
+    container.appendChild(this.quitBtn);
+
     const gauges = document.createElement('div');
     gauges.className = 'hud-gauges';
     this.root.appendChild(gauges);
@@ -334,6 +342,7 @@ export class Hud {
     this.resultBtnRetry.onclick = cb.onRetry;
     this.resultBtnTracks.onclick = cb.onTrackSelect;
     this.resultBtnMenu.onclick = cb.onMenu;
+    this.quitBtn.onclick = cb.onMenu;
   }
 
   updateRace(r: HudRaceState): void {
@@ -1023,6 +1032,31 @@ function injectStyles(): void {
     @keyframes row-pulse {
       0%, 100% { background: rgba(79, 255, 138, 0.14); }
       50%      { background: rgba(79, 255, 138, 0.32); }
+    }
+
+    #quit-btn {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      padding: 8px 14px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2.5px;
+      color: #c7d0e0;
+      background: rgba(12, 16, 24, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      cursor: pointer;
+      pointer-events: auto;
+      user-select: none;
+      transition: color 0.08s, border-color 0.08s, background 0.08s;
+      z-index: 12;
+    }
+    #quit-btn:hover {
+      color: #ffd166;
+      border-color: #ffd166;
+      background: rgba(255, 209, 102, 0.10);
     }
 
     #lap-banner {

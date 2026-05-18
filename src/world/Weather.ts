@@ -7,7 +7,10 @@ import * as THREE from 'three';
  * scene-build time.
  */
 
-export type WeatherId = 'day' | 'overcast' | 'sunset' | 'night';
+export type WeatherId = 'day' | 'overcast' | 'sunset' | 'night' | 'rain';
+/** Includes the special 'random' option (UI / storage only — resolved to a
+ *  real WeatherId via `resolveWeatherChoice`). */
+export type WeatherChoice = WeatherId | 'random';
 
 export interface WeatherPreset {
   id: WeatherId;
@@ -30,6 +33,13 @@ export interface WeatherPreset {
   fogFar: number;
   /** Renderer tonemap exposure. */
   exposure: number;
+  /** True if the track surface should look (and feel) wet — TrackBuilder
+   *  darkens + glosses the ribbon top and lowers collider friction. */
+  wet?: boolean;
+  /** Multiplier on the car's per-wheel grip. < 1 makes corners slide. */
+  slipFactor?: number;
+  /** True if the rain particle system should spawn. */
+  rain?: boolean;
 }
 
 export const WEATHER_PRESETS: Record<WeatherId, WeatherPreset> = {
@@ -101,24 +111,51 @@ export const WEATHER_PRESETS: Record<WeatherId, WeatherPreset> = {
     fogFar: 340,
     exposure: 1.25,
   },
+  rain: {
+    id: 'rain',
+    label: 'Rain',
+    sunOffset: new THREE.Vector3(40, 110, 25),
+    sunColor: 0xa6acb4,
+    sunIntensity: 1.4,
+    hemiSky: 0xa0adbc,
+    hemiGround: 0x4a4d50,
+    hemiIntensity: 1.5,
+    skyTop: 0x6a7a88,
+    skyHorizon: 0x9aa3ad,
+    skySunColor: new THREE.Color(0.6, 0.6, 0.65),
+    fogColor: 0x808a96,
+    fogNear: 70,
+    fogFar: 330,
+    exposure: 1.1,
+    wet: true,
+    slipFactor: 0.68, // softened — corners drift, but not on ice
+    rain: true,
+  },
 };
 
-const STORAGE_KEY = 'stuntline:weather';
+const STORAGE_KEY_CHOICE = 'stuntline:weatherChoice';
+const ALL_IDS: WeatherId[] = ['day', 'overcast', 'sunset', 'night', 'rain'];
 
-export function loadWeather(): WeatherId {
+export function loadWeatherChoice(): WeatherChoice {
   try {
-    const v = localStorage.getItem(STORAGE_KEY);
-    if (v && v in WEATHER_PRESETS) return v as WeatherId;
+    const v = localStorage.getItem(STORAGE_KEY_CHOICE);
+    if (v === 'random' || (v && v in WEATHER_PRESETS)) return v as WeatherChoice;
   } catch {
     /* ignore */
   }
   return 'day';
 }
 
-export function saveWeather(id: WeatherId): void {
+export function saveWeatherChoice(c: WeatherChoice): void {
   try {
-    localStorage.setItem(STORAGE_KEY, id);
+    localStorage.setItem(STORAGE_KEY_CHOICE, c);
   } catch {
     /* ignore */
   }
 }
+
+export function resolveWeatherChoice(c: WeatherChoice): WeatherId {
+  if (c !== 'random') return c;
+  return ALL_IDS[Math.floor(Math.random() * ALL_IDS.length)];
+}
+

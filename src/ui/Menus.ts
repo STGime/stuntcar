@@ -1,6 +1,11 @@
 import { TRACKS } from '../track/tracks';
 import { loadLeaderboard } from '../race/Leaderboard';
-import { WEATHER_PRESETS, loadWeather, saveWeather, type WeatherId } from '../world/Weather';
+import {
+  WEATHER_PRESETS,
+  loadWeatherChoice,
+  saveWeatherChoice,
+  type WeatherChoice,
+} from '../world/Weather';
 
 const TRANSMISSION_STORAGE_KEY = 'stuntline:transmission';
 
@@ -73,7 +78,7 @@ export class Menus {
 
   private renderTrackSelect(): void {
     const trans = loadTransmission();
-    const weather = loadWeather();
+    const weather = loadWeatherChoice();
     const cards = TRACKS.map((track, idx) => {
       const best = loadBestTimeSec(track.id);
       const top = loadLeaderboard(track.id).slice(0, 3);
@@ -125,6 +130,7 @@ export class Menus {
                   `<button class="trans-opt ${weather === w.id ? 'active' : ''}" data-weather="${w.id}">${w.label}</button>`,
               )
               .join('')}
+            <button class="trans-opt ${weather === 'random' ? 'active' : ''}" data-weather="random">Random</button>
           </div>
         </div>
         <button class="menu-btn secondary" data-action="back">Back</button>
@@ -141,15 +147,15 @@ export class Menus {
       }),
     );
 
-    let selectedWeather: WeatherId = weather;
+    let selectedWeather: WeatherChoice = weather;
     const wxButtons = this.root.querySelectorAll<HTMLButtonElement>('[data-weather]');
     wxButtons.forEach((btn) =>
       btn.addEventListener('click', () => {
-        const id = btn.dataset.weather as WeatherId | undefined;
-        if (id && id in WEATHER_PRESETS) {
+        const id = btn.dataset.weather as WeatherChoice | undefined;
+        if (id && (id === 'random' || id in WEATHER_PRESETS)) {
           selectedWeather = id;
           wxButtons.forEach((b) => b.classList.toggle('active', b === btn));
-          saveWeather(selectedWeather);
+          saveWeatherChoice(selectedWeather);
         }
       }),
     );
@@ -157,7 +163,7 @@ export class Menus {
     this.root.querySelectorAll<HTMLButtonElement>('[data-track]').forEach((card) => {
       card.addEventListener('click', () => {
         saveTransmission(selectedTrans);
-        saveWeather(selectedWeather);
+        saveWeatherChoice(selectedWeather);
         navigate(
           `?track=${card.dataset.track}&trans=${selectedTrans}&weather=${selectedWeather}`,
         );
