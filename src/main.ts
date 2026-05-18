@@ -260,6 +260,7 @@ async function main(): Promise<void> {
       //   - on-track + slipping (lateral or hard brake)  → skid mark + grey smoke
       //   - off-track at speed                            → brown dust puff
       // Airborne wheels stay clean.
+      let screechT = 0;
       if (race.state === 'racing' && crashSystem.state === 'normal') {
         const linvel = car.chassisBody.linvel();
         const rotR = car.chassisBody.rotation();
@@ -304,12 +305,16 @@ async function main(): Promise<void> {
             onTrack = !!hit && hit.collider.handle === track.collider.handle;
           }
           if (onTrack) {
-            if (heavyBrake || cornering) skidFx.emit(c, rotR, slipIntensity);
+            if (heavyBrake || cornering) {
+              skidFx.emit(c, rotR, slipIntensity);
+              if (slipIntensity > screechT) screechT = slipIntensity;
+            }
           } else if (speed > 4 && (dustFrame + i) % 2 === 0) {
             skidFx.emitDust(c, Math.min(1, speed / 22));
           }
         }
       }
+      sfx.setScreech(screechT);
 
       // Checkpoint chime on each gate pass.
       if (race.checkpoints.passed !== lastPassedCount) {

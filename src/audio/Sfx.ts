@@ -11,17 +11,78 @@
  */
 export class Sfx {
   private ctx: AudioContext | null = null;
+  // Sustained tire-screech graph (built once on `start`).
+  private screechGain: GainNode | null = null;
 
   start(): void {
-    if (this.ctx) {
-      this.ctx.resume();
-      return;
+    if (!this.ctx) {
+      const Ctx =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      this.ctx = new Ctx();
+      this.buildScreech();
     }
-    const Ctx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
-    this.ctx = new Ctx();
+    // Always try to resume — modern browsers create contexts in 'suspended'
+    // state when not under an interactive gesture chain.
+    this.ctx.resume();
+  }
+
+  /** Build the persistent tire-screech graph: bandpass-filtered noise mixed
+   *  with a high-pitched sawtooth, all gated by a master `screechGain` so
+   *  the FX loop can fade in/out smoothly. */
+  private buildScreech(): void {
+    if (!this.ctx) return;
+    // White-noise buffer (2 s).
+    const length = this.ctx.sampleRate * 2;
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    noise.loop = true;
+    const noiseBp = this.ctx.createBiquadFilter();
+    noiseBp.type = 'bandpass';
+    noiseBp.frequency.value = 2100;
+    noiseBp.Q.value = 2.0; // wider band so more of the screech energy passes
+
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = 740;
+    const oscBp = this.ctx.createBiquadFilter();
+    oscBp.type = 'bandpass';
+    oscBp.frequency.value = 760;
+    oscBp.Q.value = 2.0;
+
+    const noiseGain = this.ctx.createGain();
+    noiseGain.gain.value = 1.0;
+    const oscGain = this.ctx.createGain();
+    oscGain.gain.value = 0.45;
+
+    const master = this.ctx.createGain();
+    master.gain.value = 0;
+
+    noise.connect(noiseBp).connect(noiseGain).connect(master);
+    osc.connect(oscBp).connect(oscGain).connect(master);
+    master.connect(this.ctx.destination);
+
+    noise.start();
+    osc.start();
+    this.screechGain = master;
+  }
+
+  /**
+   * Drive the sustained tire-screech volume. `t` ∈ [0, 1]: 0 = silent,
+   * 1 = full screech. Caller should pass slip intensity (matching the FX
+   * trigger) once per render frame. Internal smoothing avoids clicks.
+   */
+  setScreech(t: number): void {
+    if (!this.ctx || !this.screechGain) return;
+    const target = Math.max(0, Math.min(1, t)) * 0.55;
+    // 50 ms time-constant on the gain ramp → no audible clicks but quick
+    // enough to track a brief slip.
+    this.screechGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.05);
   }
 
   /** Short, low-pitched tick — used for countdown 3, 2, 1. */

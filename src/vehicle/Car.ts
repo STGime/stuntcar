@@ -285,7 +285,7 @@ export class Car {
     for (const m of this.cockpitOnly) m.visible = false;
 
     // Door number decals + side stripe — give the car a bit of identity.
-    const numberTex = makeNumberDecalTexture('07');
+    const numberTex = makeNumberDecalTexture('67');
     const numberMat = new THREE.MeshBasicMaterial({
       map: numberTex,
       transparent: true,

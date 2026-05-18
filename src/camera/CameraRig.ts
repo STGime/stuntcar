@@ -32,6 +32,13 @@ export class CameraRig {
   private shakeTime = 0;
   private readonly shakeOffset = new THREE.Vector3();
 
+  // Smoothed camera roll for cornering. We tilt the chase camera's `up`
+  // vector slightly into the turn (proportional to lateral velocity) so
+  // hard corners feel weightier. Capped at ~5.7° to keep the horizon
+  // readable through banked sections.
+  private roll = 0;
+  private readonly rightVec = new THREE.Vector3();
+
   constructor() {
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.1, 800);
     this.camera.position.set(0, 6, -12);
@@ -58,13 +65,28 @@ export class CameraRig {
     const carQuat = carObj.quaternion;
 
     if (this.mode === 'chase') {
-      this.camera.up.copy(WORLD_UP);
+      // Lateral velocity from chassis = how hard we're cornering. Tilt
+      // `up` slightly into the turn proportional to that, smoothed so a
+      // brief wiggle doesn't shake the horizon.
+      const linvel = car.chassisBody.linvel();
+      this.rightVec.set(1, 0, 0).applyQuaternion(carQuat);
+      const lateral =
+        linvel.x * this.rightVec.x +
+        linvel.y * this.rightVec.y +
+        linvel.z * this.rightVec.z;
+      const targetRoll = Math.max(-0.10, Math.min(0.10, -lateral * 0.012));
+      const kRoll = 1 - Math.exp(-6 * dt);
+      this.roll += (targetRoll - this.roll) * kRoll;
 
       // Yaw-only forward direction (flatten onto the ground plane).
       this.fwd.set(0, 0, 1).applyQuaternion(carQuat);
       this.fwd.y = 0;
       if (this.fwd.lengthSq() < 1e-5) this.fwd.set(0, 0, 1);
       this.fwd.normalize();
+
+      // Apply the smoothed roll: rotate WORLD_UP around the (yaw-flattened)
+      // forward axis. With forward flattened, this never adds pitch.
+      this.camera.up.copy(WORLD_UP).applyAxisAngle(this.fwd, this.roll);
 
       this.desired
         .copy(carPos)
