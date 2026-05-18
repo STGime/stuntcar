@@ -44,8 +44,10 @@ export class Car {
   private readonly body: RAPIER.RigidBody;
   private readonly controller: RAPIER.DynamicRayCastVehicleController;
   private readonly wheelMeshes: THREE.Mesh[] = [];
-  private readonly cockpitHidden: THREE.Mesh[] = [];
+  private readonly cockpitHidden: THREE.Object3D[] = [];
+  private readonly cockpitOnly: THREE.Object3D[] = [];
   private readonly taillightMat: THREE.MeshStandardMaterial;
+  private steeringWheelMesh: THREE.Object3D | null = null;
 
   private steer = 0; // current (smoothed) steering angle, radians
 
@@ -238,6 +240,48 @@ export class Car {
     taillightR.position.x = hx - 0.35;
     group.add(taillightR);
 
+    // Steering wheel: visible only when the cockpit camera is active.
+    // Outer ring is a torus oriented in the wheel's local XY plane; spin
+    // axis is local +Z. A thin parent group adds the slight rake toward the
+    // driver so steering rotation stays around the wheel's own axis.
+    const wheelTilt = new THREE.Group();
+    wheelTilt.position.set(0, hy + 0.05, hz * 0.05);
+    wheelTilt.rotation.x = 0.6; // dashboard rake
+    const wheelMat = new THREE.MeshStandardMaterial({
+      color: 0x1a1f28,
+      roughness: 0.6,
+      metalness: 0.25,
+    });
+    const wheel = new THREE.Group();
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.16, 0.018, 8, 26),
+      wheelMat,
+    );
+    wheel.add(rim);
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.035, 0.04, 12),
+      wheelMat,
+    );
+    hub.rotation.x = Math.PI / 2;
+    wheel.add(hub);
+    for (let i = 0; i < 3; i++) {
+      const spoke = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.018, 0.012),
+        wheelMat,
+      );
+      const theta = (i / 3) * Math.PI * 2 - Math.PI / 2;
+      spoke.position.set(Math.cos(theta) * 0.08, Math.sin(theta) * 0.08, 0);
+      spoke.rotation.z = theta;
+      wheel.add(spoke);
+    }
+    wheelTilt.add(wheel);
+    group.add(wheelTilt);
+    this.cockpitOnly.push(wheelTilt);
+    this.steeringWheelMesh = wheel;
+
+    // Hide cockpit-only props by default (chase is the default view).
+    for (const m of this.cockpitOnly) m.visible = false;
+
     scene.add(group);
     this.chassisView = new BodyView(this.body, group);
 
@@ -282,10 +326,12 @@ export class Car {
     }
   }
 
-  /** Hide the windshield + rear window when the cockpit camera is active so
-   *  the player gets a clean, uniformly unobstructed view of the road. */
+  /** Toggle in-cabin visuals between chase and cockpit cameras. Windshield,
+   *  rear glass and the driver helmet hide in cockpit; the steering wheel +
+   *  hub appear only in cockpit. */
   setCockpitView(active: boolean): void {
     for (const m of this.cockpitHidden) m.visible = !active;
+    for (const m of this.cockpitOnly) m.visible = active;
   }
 
   /** Per-wheel ground-contact info (world space), or `null` if airborne.
@@ -424,6 +470,11 @@ export class Car {
   render(alpha: number): void {
     this.chassisView.apply(alpha);
     this.syncWheels();
+    if (this.steeringWheelMesh) {
+      // Real wheels turn ~270° each way; multiplier maps `steer`'s ±0.55 rad
+      // range to about ±2.8 rad for a believable cockpit feel.
+      this.steeringWheelMesh.rotation.z = this.steer * 5.0;
+    }
   }
 
   /**
