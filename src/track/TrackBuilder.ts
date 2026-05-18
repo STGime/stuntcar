@@ -56,6 +56,9 @@ interface CrossSection {
   tr: THREE.Vector3;
   bl: THREE.Vector3;
   br: THREE.Vector3;
+  /** True when this cross-section sits on a turn or banked corner — its
+   *  edges should sprout red/white rumble strip curbs. */
+  curb: boolean;
 }
 
 /**
@@ -96,14 +99,14 @@ export function buildTrack(
   let minY = pos.y - RIBBON_THICKNESS;
   const centerline: CenterlineSample[] = [];
 
-  const emitCrossSection = (width: number): void => {
+  const emitCrossSection = (width: number, curb: boolean): void => {
     rightVec.copy(RIGHT_LOCAL).applyQuaternion(quat).multiplyScalar(width / 2);
     downVec.copy(UP_LOCAL).applyQuaternion(quat).multiplyScalar(-RIBBON_THICKNESS);
     const tl = pos.clone().sub(rightVec);
     const tr = pos.clone().add(rightVec);
     const bl = tl.clone().add(downVec);
     const br = tr.clone().add(downVec);
-    strips[strips.length - 1].push({ tl, tr, bl, br });
+    strips[strips.length - 1].push({ tl, tr, bl, br, curb });
     for (const v of [tl, tr, bl, br]) if (v.y < minY) minY = v.y;
     centerline.push({ x: pos.x, z: pos.z, halfWidth: width / 2 });
   };
@@ -142,9 +145,17 @@ export function buildTrack(
       continue;
     }
 
+    // Curbs (red/white rumble strip) on segments that turn or bank — proper
+    // race-track feel. Loops and corkscrews are excluded since the geometry
+    // wraps and the strip would wind weirdly around the bore.
+    const wantsCurb =
+      seg.kind !== 'loop' &&
+      seg.kind !== 'corkscrew' &&
+      ((seg.turn ?? 0) !== 0 || (seg.bank ?? 0) !== 0);
+
     // First emission of a new strip happens here so the ribbon starts at the
     // current pos (without this, the strip would lose its leading cross-section).
-    if (strips[strips.length - 1].length === 0) emitCrossSection(seg.width);
+    if (strips[strips.length - 1].length === 0) emitCrossSection(seg.width, wantsCurb);
 
     const subSteps = Math.max(2, Math.ceil(seg.length / SAMPLE_STEP));
 
@@ -184,7 +195,7 @@ export function buildTrack(
         pitchQ.setFromAxisAngle(RIGHT_LOCAL, -pitchTheta);
         quat.copy(entryQuat).multiply(pitchQ);
 
-        emitCrossSection(seg.width);
+        emitCrossSection(seg.width, wantsCurb);
       }
     } else {
       const ds = seg.length / subSteps;
@@ -224,7 +235,7 @@ export function buildTrack(
         }
         forwardVec.copy(FORWARD_LOCAL).applyQuaternion(quat);
         pos.addScaledVector(forwardVec, ds);
-        emitCrossSection(seg.width);
+        emitCrossSection(seg.width, wantsCurb);
       }
     }
 
@@ -356,6 +367,18 @@ function buildStripMeshes(
   const stripeMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
   const STRIPE_WIDTH = 0.35;
   const STRIPE_RAISE = 0.02;
+  // Curbs — alternating red/white rumble strip painted along the ribbon's
+  // top edges on segments that turn or bank. Vertex-coloured.
+  const curbMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.55,
+    metalness: 0.0,
+    side: THREE.DoubleSide,
+  });
+  const CURB_WIDTH = 0.55;
+  const CURB_RAISE = 0.06;
+  const CURB_RED: [number, number, number] = [0.82, 0.13, 0.13];
+  const CURB_WHITE: [number, number, number] = [0.95, 0.95, 0.92];
 
   // Combine all strips into a single trimesh collider — cheaper than one per strip.
   const allPositions: number[] = [];
@@ -537,6 +560,86 @@ function buildStripMeshes(
       stripeIdx.push(a, c, d, a, d, b);
     }
 
+    // ---- Curbs (red/white rumble strip) ----------------------------------
+    // For each pair of consecutive cross-sections where BOTH carry the curb
+    // flag, emit a thin strip outside the top edge on each side. Quads are
+    // solid-coloured, alternating red ↔ white along the strip so the rumble
+    // pattern reads at race speed. Vertices are not shared across quads so
+    // each quad can be a different solid colour.
+    const curbPos: number[] = [];
+    const curbColors: number[] = [];
+    const curbIdx: number[] = [];
+    const scratchUp = new THREE.Vector3();
+    const scratchRight = new THREE.Vector3();
+    let curbStripeIndex = 0;
+    for (let i = 0; i < xs.length - 1; i++) {
+      const cs0 = xs[i];
+      const cs1 = xs[i + 1];
+      if (!cs0.curb || !cs1.curb) continue;
+      const color = curbStripeIndex % 2 === 0 ? CURB_RED : CURB_WHITE;
+      curbStripeIndex++;
+
+      // Build the curb on the LEFT side (just inside tl) and RIGHT side
+      // (just inside tr). Each side gets its own quad. The local "up"
+      // direction is from the bottom-edge midpoint to the top-edge midpoint
+      // (so the curb lifts perpendicular to the track surface, even on
+      // banked sections), and the local "right" is along the cross-section
+      // (from tl to tr).
+      for (const side of [-1, 1] as const) {
+        const baseColor = color;
+        // Build a 4-vertex quad spanning two consecutive cross-sections.
+        const csA = side === -1 ? cs0.tl : cs0.tr;
+        const csB = side === -1 ? cs1.tl : cs1.tr;
+        // Up + right for cs0
+        scratchUp
+          .set(
+            (cs0.tl.x + cs0.tr.x) / 2 - (cs0.bl.x + cs0.br.x) / 2,
+            (cs0.tl.y + cs0.tr.y) / 2 - (cs0.bl.y + cs0.br.y) / 2,
+            (cs0.tl.z + cs0.tr.z) / 2 - (cs0.bl.z + cs0.br.z) / 2,
+          )
+          .normalize();
+        scratchRight.set(cs0.tr.x - cs0.tl.x, cs0.tr.y - cs0.tl.y, cs0.tr.z - cs0.tl.z).normalize();
+        const outerAx = csA.x + scratchUp.x * CURB_RAISE;
+        const outerAy = csA.y + scratchUp.y * CURB_RAISE;
+        const outerAz = csA.z + scratchUp.z * CURB_RAISE;
+        const innerAx = outerAx + scratchRight.x * (-side) * CURB_WIDTH;
+        const innerAy = outerAy + scratchRight.y * (-side) * CURB_WIDTH;
+        const innerAz = outerAz + scratchRight.z * (-side) * CURB_WIDTH;
+
+        scratchUp
+          .set(
+            (cs1.tl.x + cs1.tr.x) / 2 - (cs1.bl.x + cs1.br.x) / 2,
+            (cs1.tl.y + cs1.tr.y) / 2 - (cs1.bl.y + cs1.br.y) / 2,
+            (cs1.tl.z + cs1.tr.z) / 2 - (cs1.bl.z + cs1.br.z) / 2,
+          )
+          .normalize();
+        scratchRight.set(cs1.tr.x - cs1.tl.x, cs1.tr.y - cs1.tl.y, cs1.tr.z - cs1.tl.z).normalize();
+        const outerBx = csB.x + scratchUp.x * CURB_RAISE;
+        const outerBy = csB.y + scratchUp.y * CURB_RAISE;
+        const outerBz = csB.z + scratchUp.z * CURB_RAISE;
+        const innerBx = outerBx + scratchRight.x * (-side) * CURB_WIDTH;
+        const innerBy = outerBy + scratchRight.y * (-side) * CURB_WIDTH;
+        const innerBz = outerBz + scratchRight.z * (-side) * CURB_WIDTH;
+
+        const base = curbPos.length / 3;
+        curbPos.push(
+          outerAx, outerAy, outerAz,
+          innerAx, innerAy, innerAz,
+          innerBx, innerBy, innerBz,
+          outerBx, outerBy, outerBz,
+        );
+        for (let v = 0; v < 4; v++) curbColors.push(baseColor[0], baseColor[1], baseColor[2]);
+        // Wind so the top face points up. Left side (side=-1): outer is on
+        // the OUTSIDE of the ribbon's left edge — use one winding. Right
+        // side: mirror it.
+        if (side === -1) {
+          curbIdx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        } else {
+          curbIdx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+        }
+      }
+    }
+
     // ---- Three.js meshes -------------------------------------------------
     addStripMesh(scene, topPositions, topIndices, topMat, true);
     addStripMesh(scene, bottomPositions, bottomIndices, sideMat, false);
@@ -546,6 +649,7 @@ function buildStripMeshes(
     addColoredStripMesh(scene, rightSkirtPos, rightSkirtColors, rightSkirtIdx, skirtMat);
     addColoredStripMesh(scene, skirtCapPos, skirtCapColors, skirtCapIdx, skirtMat);
     addStripMesh(scene, stripePos, stripeIdx, stripeMat, false);
+    addColoredStripMesh(scene, curbPos, curbColors, curbIdx, curbMat);
 
     // Edge highlights along the top corners.
     addEdgeLine(scene, xs.map((cs) => cs.tl), edgeMat);
