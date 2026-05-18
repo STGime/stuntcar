@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { Engine } from './core/Engine';
 import { PhysicsWorld } from './core/PhysicsWorld';
 import { Input } from './core/Input';
-import { buildScene } from './world/Scene';
+import { buildScene, SUN_OFFSET } from './world/Scene';
+import { scatterRoadsideProps } from './world/Props';
 import { Car } from './vehicle/Car';
 import { CameraRig } from './camera/CameraRig';
 import { Hud } from './ui/Hud';
@@ -60,8 +61,9 @@ async function main(): Promise<void> {
   const physics = await PhysicsWorld.create();
   const input = new Input();
 
-  buildScene(engine.scene, physics.world);
+  const { sun } = buildScene(engine.scene, physics.world);
   const track = buildTrack(engine.scene, physics.world, trackDef);
+  scatterRoadsideProps(engine.scene, physics.world, track, trackDef.id);
   document.title = `STUNTLINE — ${trackDef.name}`;
 
   const car = new Car(engine.scene, physics.world);
@@ -269,6 +271,13 @@ async function main(): Promise<void> {
 
       car.render(alpha);
       camera.update(car, frameDt);
+
+      // Slide the shadow camera along with the car so its tight frustum
+      // always covers the area the player can see. The sun keeps its
+      // world-space direction; only the focus point moves.
+      const carPos = car.chassisView.object.position;
+      sun.target.position.set(carPos.x, 0, carPos.z);
+      sun.position.set(carPos.x + SUN_OFFSET.x, SUN_OFFSET.y, carPos.z + SUN_OFFSET.z);
 
       const dt = car.drivetrain;
       hud.update({

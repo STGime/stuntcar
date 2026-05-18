@@ -27,6 +27,15 @@ export interface CheckpointMarker {
   isFinish: boolean;
 }
 
+/** Cross-section centerline sample used by Props.ts to keep scenery off the
+ *  ribbon's XZ footprint without going through the physics engine. */
+export interface CenterlineSample {
+  x: number;
+  z: number;
+  /** Half the ribbon width at this sample, metres. */
+  halfWidth: number;
+}
+
 export interface BuiltTrack {
   spawn: { position: THREE.Vector3; quaternion: THREE.Quaternion };
   checkpoints: CheckpointMarker[];
@@ -37,6 +46,8 @@ export interface BuiltTrack {
    *  Used by the off-track detector to tell "wheels on track" from "wheels on
    *  the ambient ground beside it" via a downward raycast. */
   collider: RAPIER.Collider | null;
+  /** XZ centerline samples + per-sample half-width along the whole ribbon. */
+  centerline: CenterlineSample[];
 }
 
 /** A ribbon cross-section: four corners in world space (top + bottom × L/R). */
@@ -83,6 +94,7 @@ export function buildTrack(
   const downVec = new THREE.Vector3();
 
   let minY = pos.y - RIBBON_THICKNESS;
+  const centerline: CenterlineSample[] = [];
 
   const emitCrossSection = (width: number): void => {
     rightVec.copy(RIGHT_LOCAL).applyQuaternion(quat).multiplyScalar(width / 2);
@@ -93,6 +105,7 @@ export function buildTrack(
     const br = tr.clone().add(downVec);
     strips[strips.length - 1].push({ tl, tr, bl, br });
     for (const v of [tl, tr, bl, br]) if (v.y < minY) minY = v.y;
+    centerline.push({ x: pos.x, z: pos.z, halfWidth: width / 2 });
   };
 
   const breakStrip = (): void => {
@@ -280,7 +293,7 @@ export function buildTrack(
 
   const collider = buildStripMeshes(scene, world, strips, def.closedLoop ?? false);
 
-  return { spawn, checkpoints, finish, minY, collider };
+  return { spawn, checkpoints, finish, minY, collider, centerline };
 }
 
 function maybeRecordCheckpoint(

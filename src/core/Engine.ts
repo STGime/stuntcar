@@ -18,14 +18,21 @@ export class Engine {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // ACES filmic tonemap pulls highlights and gives the scene a cinematic
+    // contrast curve. Exposure nudged slightly above neutral so warm sunlit
+    // surfaces still pop after the curve squeezes them.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
     // Warmer late-afternoon sky. Fog matches so distant fade reads as haze
     // rather than a wall — the circuit's far side blends into the horizon.
+    // Range tightened (120-480 vs 180-500) for more atmospheric depth.
     const skyColor = 0xc8b491;
     this.scene.background = new THREE.Color(skyColor);
-    this.scene.fog = new THREE.Fog(skyColor, 180, 500);
+    this.scene.fog = new THREE.Fog(skyColor, 120, 480);
 
     window.addEventListener('resize', () => this.handleResize());
   }

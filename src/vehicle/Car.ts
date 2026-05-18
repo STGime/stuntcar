@@ -276,6 +276,7 @@ export class Car {
         new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 0.85 }),
       );
       wheelMesh.castShadow = true;
+      wheelMesh.receiveShadow = true;
       scene.add(wheelMesh);
       this.wheelMeshes.push(wheelMesh);
     }
