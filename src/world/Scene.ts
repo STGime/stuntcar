@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { buildMountains } from './Mountains';
+import { buildCitySkyline } from './CitySkyline';
 import { type WeatherPreset, WEATHER_PRESETS } from './Weather';
+import type { TrackTheme } from '../track/TrackTypes';
 
 /**
  * Direction vector from the sun's target to its position (i.e. where sunlight
@@ -29,6 +31,7 @@ export function buildScene(
   scene: THREE.Scene,
   world: RAPIER.World,
   weather: WeatherPreset = WEATHER_PRESETS.day,
+  theme: TrackTheme = 'forest',
 ): SceneRefs {
   // Mirror the preset's sun offset into the exported scratch vector so
   // `main.ts` can use it without knowing which preset is active.
@@ -83,8 +86,13 @@ export function buildScene(
   sky.frustumCulled = false;
   scene.add(sky);
 
-  // Distant mountain ridge ring (decoration, no collider).
-  buildMountains(scene);
+  // Distant horizon decoration — mountains in 'forest' themes, a city
+  // silhouette in 'city' themes. Either way it's a single draw call.
+  if (theme === 'city') {
+    buildCitySkyline(scene);
+  } else {
+    buildMountains(scene);
+  }
 
   // Atmosphere — fog tint matches the preset's horizon haze so the far
   // edge of the world blends in naturally.

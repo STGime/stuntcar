@@ -34,6 +34,13 @@ export interface CenterlineSample {
   z: number;
   /** Half the ribbon width at this sample, metres. */
   halfWidth: number;
+  /** True if this sample sits under a tunnel (used by the Snow system to
+   *  cull falling flakes inside the tunnel volume). */
+  tunnel: boolean;
+  /** Top of the ribbon at this sample. Used by the Snow system to decide
+   *  whether a flake is above the tunnel ceiling (no occlusion) or below
+   *  (occlude). */
+  topY: number;
 }
 
 export interface BuiltTrack {
@@ -59,6 +66,9 @@ interface CrossSection {
   /** True when this cross-section sits on a turn or banked corner — its
    *  edges should sprout red/white rumble strip curbs. */
   curb: boolean;
+  /** True when this cross-section lies under a tunnel — TrackBuilder
+   *  emits walls + ceiling geometry over the ribbon (visual only). */
+  tunnel: boolean;
 }
 
 /**
@@ -74,6 +84,10 @@ export interface BuildTrackOptions {
   wet?: boolean;
   /** Override the trimesh collider friction. Defaults to 1.1. */
   trackFriction?: number;
+  /** True for city-themed tracks — TrackBuilder switches to asphalt top
+   *  colour, drops the dirt skirts, and emits concrete piers + tunnel
+   *  arches where the segments call for them. */
+  urban?: boolean;
 }
 
 export function buildTrack(
@@ -108,16 +122,22 @@ export function buildTrack(
   let minY = pos.y - RIBBON_THICKNESS;
   const centerline: CenterlineSample[] = [];
 
-  const emitCrossSection = (width: number, curb: boolean): void => {
+  const emitCrossSection = (width: number, curb: boolean, tunnel: boolean): void => {
     rightVec.copy(RIGHT_LOCAL).applyQuaternion(quat).multiplyScalar(width / 2);
     downVec.copy(UP_LOCAL).applyQuaternion(quat).multiplyScalar(-RIBBON_THICKNESS);
     const tl = pos.clone().sub(rightVec);
     const tr = pos.clone().add(rightVec);
     const bl = tl.clone().add(downVec);
     const br = tr.clone().add(downVec);
-    strips[strips.length - 1].push({ tl, tr, bl, br, curb });
+    strips[strips.length - 1].push({ tl, tr, bl, br, curb, tunnel });
     for (const v of [tl, tr, bl, br]) if (v.y < minY) minY = v.y;
-    centerline.push({ x: pos.x, z: pos.z, halfWidth: width / 2 });
+    centerline.push({
+      x: pos.x,
+      z: pos.z,
+      halfWidth: width / 2,
+      tunnel,
+      topY: pos.y,
+    });
   };
 
   const breakStrip = (): void => {
@@ -161,10 +181,11 @@ export function buildTrack(
       seg.kind !== 'loop' &&
       seg.kind !== 'corkscrew' &&
       ((seg.turn ?? 0) !== 0 || (seg.bank ?? 0) !== 0);
+    const wantsTunnel = !!seg.tunnel;
 
     // First emission of a new strip happens here so the ribbon starts at the
     // current pos (without this, the strip would lose its leading cross-section).
-    if (strips[strips.length - 1].length === 0) emitCrossSection(seg.width, wantsCurb);
+    if (strips[strips.length - 1].length === 0) emitCrossSection(seg.width, wantsCurb, wantsTunnel);
 
     const subSteps = Math.max(2, Math.ceil(seg.length / SAMPLE_STEP));
 
@@ -204,7 +225,7 @@ export function buildTrack(
         pitchQ.setFromAxisAngle(RIGHT_LOCAL, -pitchTheta);
         quat.copy(entryQuat).multiply(pitchQ);
 
-        emitCrossSection(seg.width, wantsCurb);
+        emitCrossSection(seg.width, wantsCurb, wantsTunnel);
       }
     } else {
       const ds = seg.length / subSteps;
@@ -244,7 +265,7 @@ export function buildTrack(
         }
         forwardVec.copy(FORWARD_LOCAL).applyQuaternion(quat);
         pos.addScaledVector(forwardVec, ds);
-        emitCrossSection(seg.width, wantsCurb);
+        emitCrossSection(seg.width, wantsCurb, wantsTunnel);
       }
     }
 
@@ -282,16 +303,18 @@ export function buildTrack(
       }
     }
     for (const cp of checkpoints) cp.position.y += shift;
+    for (const s of centerline) s.topY += shift;
     spawn.position.y += shift;
     minY += shift;
   }
 
-  // For closed loops, snap the LAST cross-section of the final strip to
-  // exactly match the FIRST cross-section of the first strip. Any closure
-  // error (in xz or y) gets absorbed into the slope of the very last
-  // triangle pair — a small ramp on the final ~0.8 m of track — instead of
-  // appearing as a vertical wall at the seam. With this snap the seam is
-  // geometrically exact: ribbon end and start occupy the same vertices.
+  // For closed loops, "blend-snap" the LAST N cross-sections of the final
+  // strip toward the FIRST cross-section of the first strip. Each of the
+  // last N cross-sections gets a linearly-increasing fraction of the total
+  // closure-error delta added to its corners, so the residual error is
+  // spread across ~N metres of track instead of compressing into a single
+  // 1-m quad at the seam. With N ≈ 10 a 1 m closure error becomes a 0.1
+  // m/m gradient — invisible to the driver.
   if (def.closedLoop) {
     let firstIdx = -1;
     let lastIdx = -1;
@@ -303,11 +326,41 @@ export function buildTrack(
     }
     if (firstIdx !== -1 && lastIdx !== -1) {
       const firstCs = strips[firstIdx][0];
-      const lastCs = strips[lastIdx][strips[lastIdx].length - 1];
-      lastCs.tl.copy(firstCs.tl);
-      lastCs.tr.copy(firstCs.tr);
-      lastCs.bl.copy(firstCs.bl);
-      lastCs.br.copy(firstCs.br);
+      const lastStrip = strips[lastIdx];
+      const lastCs = lastStrip[lastStrip.length - 1];
+
+      // Per-corner closure-error vectors (firstCs − naturalLastCs).
+      const tmpV = new THREE.Vector3();
+      const errTl = new THREE.Vector3().subVectors(firstCs.tl, lastCs.tl);
+      const errTr = new THREE.Vector3().subVectors(firstCs.tr, lastCs.tr);
+      const errBl = new THREE.Vector3().subVectors(firstCs.bl, lastCs.bl);
+      const errBr = new THREE.Vector3().subVectors(firstCs.br, lastCs.br);
+
+      // Spread the correction across the last ~30 m of ribbon so even a
+      // multi-metre closure error becomes a near-imperceptible gradient.
+      // A smoothstep curve (3t² − 2t³) easing keeps the slope changes
+      // gentle at both ends instead of starting and stopping abruptly.
+      const blendCount = Math.min(lastStrip.length - 1, 30);
+      for (let i = 0; i < blendCount; i++) {
+        const cs = lastStrip[lastStrip.length - blendCount + i];
+        const raw = (i + 1) / blendCount;
+        const t = raw * raw * (3 - 2 * raw); // smoothstep
+        cs.tl.add(tmpV.copy(errTl).multiplyScalar(t));
+        cs.tr.add(tmpV.copy(errTr).multiplyScalar(t));
+        cs.bl.add(tmpV.copy(errBl).multiplyScalar(t));
+        cs.br.add(tmpV.copy(errBr).multiplyScalar(t));
+      }
+
+      // The finish-line checkpoint was recorded at the natural walk
+      // position of the last segment's end — but the actual ribbon there
+      // has just been blended to firstCs's position. Move the finish
+      // marker to the seam (top-centre of firstCs) so the gate's pylons
+      // sit on the road rather than partially below it.
+      const seamCenter = new THREE.Vector3()
+        .addVectors(firstCs.tl, firstCs.tr)
+        .multiplyScalar(0.5);
+      const finishCp = checkpoints[checkpoints.length - 1];
+      if (finishCp) finishCp.position.copy(seamCenter);
     }
   }
 
@@ -318,6 +371,7 @@ export function buildTrack(
     def.closedLoop ?? false,
     options.wet ?? false,
     options.trackFriction ?? 1.1,
+    options.urban ?? false,
   );
 
   return { spawn, checkpoints, finish, minY, collider, centerline };
@@ -349,13 +403,15 @@ function buildStripMeshes(
   closedLoop: boolean,
   wet: boolean,
   trackFriction: number,
+  urban: boolean,
 ): RAPIER.Collider | null {
   // Wet ribbon: darker, glossier (lower roughness + a touch of metalness) so
   // the directional sun + sky reflection read as a damp sheen.
+  // Urban (dry) tracks use a dark asphalt tone instead of the default grey.
   const topMat = new THREE.MeshStandardMaterial({
-    color: wet ? 0x2f3848 : 0x5a6680,
-    roughness: wet ? 0.28 : 0.7,
-    metalness: wet ? 0.35 : 0.05,
+    color: wet ? 0x2f3848 : urban ? 0x2c2f36 : 0x5a6680,
+    roughness: wet ? 0.28 : urban ? 0.85 : 0.7,
+    metalness: wet ? 0.35 : urban ? 0.0 : 0.05,
   });
   const sideMat = new THREE.MeshStandardMaterial({
     color: 0x2c3340,
@@ -384,7 +440,13 @@ function buildStripMeshes(
   const SKIRT_BASE_DARKEN = 0.35; // vertex colour multiplier at the ground
   // Centre lane stripe — yellow line painted just above the track top so
   // it's easy to see where the lane curves over bumps and hills.
-  const stripeMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
+  // Stripe is DoubleSide so an oddly-wound quad at a closedLoop seam still
+  // renders. Without this, a closure error large enough to flip the seam
+  // quad's winding leaves a missing chunk of paint on the road.
+  const stripeMat = new THREE.MeshBasicMaterial({
+    color: 0xffd166,
+    side: THREE.DoubleSide,
+  });
   const STRIPE_WIDTH = 0.35;
   const STRIPE_RAISE = 0.02;
   // Curbs — alternating red/white rumble strip painted along the ribbon's
@@ -393,6 +455,16 @@ function buildStripMeshes(
     vertexColors: true,
     roughness: 0.55,
     metalness: 0.0,
+    side: THREE.DoubleSide,
+  });
+  // Tunnel walls + ceiling for city tracks. Slightly emissive so the inside
+  // doesn't read pure-black when the player is mid-tunnel under daylight.
+  const tunnelMat = new THREE.MeshStandardMaterial({
+    color: 0x3a3d44,
+    roughness: 0.9,
+    metalness: 0.0,
+    emissive: 0x141518,
+    emissiveIntensity: 0.5,
     side: THREE.DoubleSide,
   });
   const CURB_WIDTH = 0.55;
@@ -665,14 +737,26 @@ function buildStripMeshes(
       }
     }
 
+    // ---- Tunnel (urban only): walls + ceiling over flagged cross-sections.
+    // Built BEFORE the skirt/pier choice so we can group it into the urban
+    // pipeline below.
+    const tunnelPos: number[] = [];
+    const tunnelIdx: number[] = [];
+    if (urban) buildTunnelGeometry(xs, tunnelPos, tunnelIdx);
+
     // ---- Three.js meshes -------------------------------------------------
     addStripMesh(scene, topPositions, topIndices, topMat, true);
     addStripMesh(scene, bottomPositions, bottomIndices, sideMat, false);
     addStripMesh(scene, sidePositions, sideIndices, sideMat, false);
     addStripMesh(scene, capPositions, capIndices, sideMat, false);
-    addColoredStripMesh(scene, leftSkirtPos, leftSkirtColors, leftSkirtIdx, skirtMat);
-    addColoredStripMesh(scene, rightSkirtPos, rightSkirtColors, rightSkirtIdx, skirtMat);
-    addColoredStripMesh(scene, skirtCapPos, skirtCapColors, skirtCapIdx, skirtMat);
+    if (!urban) {
+      addColoredStripMesh(scene, leftSkirtPos, leftSkirtColors, leftSkirtIdx, skirtMat);
+      addColoredStripMesh(scene, rightSkirtPos, rightSkirtColors, rightSkirtIdx, skirtMat);
+      addColoredStripMesh(scene, skirtCapPos, skirtCapColors, skirtCapIdx, skirtMat);
+    } else {
+      buildPiers(scene, xs);
+      addStripMesh(scene, tunnelPos, tunnelIdx, tunnelMat, true);
+    }
     addStripMesh(scene, stripePos, stripeIdx, stripeMat, false);
     addColoredStripMesh(scene, curbPos, curbColors, curbIdx, curbMat);
 
@@ -687,10 +771,14 @@ function buildStripMeshes(
     appendToCollider(allPositions, allIndices, capPositions, capIndices);
 
     // Skirts join a separate collider so the car can't drive THROUGH the
-    // dirt walls but riding their slope still counts as off-track.
-    appendToCollider(skirtAllPos, skirtAllIdx, leftSkirtPos, leftSkirtIdx);
-    appendToCollider(skirtAllPos, skirtAllIdx, rightSkirtPos, rightSkirtIdx);
-    appendToCollider(skirtAllPos, skirtAllIdx, skirtCapPos, skirtCapIdx);
+    // dirt walls but riding their slope still counts as off-track. Urban
+    // tracks use piers instead of skirts — skip the collider too or the
+    // car runs into invisible dirt-wall geometry.
+    if (!urban) {
+      appendToCollider(skirtAllPos, skirtAllIdx, leftSkirtPos, leftSkirtIdx);
+      appendToCollider(skirtAllPos, skirtAllIdx, rightSkirtPos, rightSkirtIdx);
+      appendToCollider(skirtAllPos, skirtAllIdx, skirtCapPos, skirtCapIdx);
+    }
   }
 
   // No wrap-around triangles needed — the closed-loop snap (done in
@@ -723,6 +811,111 @@ function buildStripMeshes(
   }
 
   return ribbonCollider;
+}
+
+/** Concrete piers under each cross-section of an urban strip — replaces
+ *  the dirt skirts. One cylinder per cross-section at the centerline,
+ *  reaching from y=0 to the ribbon's underside. */
+function buildPiers(scene: THREE.Scene, xs: CrossSection[]): void {
+  if (xs.length < 2) return;
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x6e6f72,
+    roughness: 0.95,
+    metalness: 0.0,
+  });
+  const PIER_STEP = 12; // metres between piers along the ribbon
+  // March along the strip, dropping a pier roughly every PIER_STEP metres
+  // worth of cross-sections.
+  let accum = 0;
+  for (let i = 0; i < xs.length; i++) {
+    const cs = xs[i];
+    const cx = (cs.bl.x + cs.br.x) / 2;
+    const cz = (cs.bl.z + cs.br.z) / 2;
+    const cy = (cs.bl.y + cs.br.y) / 2;
+    const groundY = 0;
+    const height = Math.max(0.5, cy - groundY);
+    if (i > 0) {
+      const prev = xs[i - 1];
+      const px = (prev.bl.x + prev.br.x) / 2;
+      const pz = (prev.bl.z + prev.br.z) / 2;
+      accum += Math.hypot(cx - px, cz - pz);
+    }
+    if (i === 0 || accum >= PIER_STEP || i === xs.length - 1) {
+      accum = 0;
+      // Skip if too short — looks weird.
+      if (height < 0.8) continue;
+      const pier = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.45, 0.55, height, 10),
+        mat,
+      );
+      pier.position.set(cx, height / 2, cz);
+      pier.castShadow = true;
+      pier.receiveShadow = true;
+      scene.add(pier);
+    }
+  }
+}
+
+/** Tunnel geometry for any consecutive run of `cs.tunnel === true`
+ *  cross-sections: vertical walls outside the ribbon's left and right
+ *  edges + a flat ceiling. Visual only — no collider. */
+function buildTunnelGeometry(
+  xs: CrossSection[],
+  outPos: number[],
+  outIdx: number[],
+): void {
+  const HEIGHT = 5.5;
+  const WALL_OUT = 0.6; // tunnel walls sit slightly outside the ribbon edge
+  // We need cross-section local "up" + "right" to push outward + upward.
+  for (let i = 0; i < xs.length - 1; i++) {
+    const a = xs[i];
+    const b = xs[i + 1];
+    if (!a.tunnel || !b.tunnel) continue;
+    // Compute LEFT wall verts at a and b.
+    const buildWall = (
+      cs: CrossSection,
+      side: 1 | -1,
+    ): [THREE.Vector3, THREE.Vector3] => {
+      const rightVec = new THREE.Vector3(
+        cs.tr.x - cs.tl.x,
+        cs.tr.y - cs.tl.y,
+        cs.tr.z - cs.tl.z,
+      ).normalize();
+      const upMid = new THREE.Vector3(
+        (cs.tl.x + cs.tr.x) / 2 - (cs.bl.x + cs.br.x) / 2,
+        (cs.tl.y + cs.tr.y) / 2 - (cs.bl.y + cs.br.y) / 2,
+        (cs.tl.z + cs.tr.z) / 2 - (cs.bl.z + cs.br.z) / 2,
+      ).normalize();
+      const edge = side === -1 ? cs.tl : cs.tr;
+      const base = edge.clone().add(rightVec.clone().multiplyScalar(-side * WALL_OUT));
+      const top = base.clone().add(upMid.multiplyScalar(HEIGHT));
+      return [base, top];
+    };
+
+    const [aLB, aLT] = buildWall(a, -1);
+    const [bLB, bLT] = buildWall(b, -1);
+    const [aRB, aRT] = buildWall(a, 1);
+    const [bRB, bRT] = buildWall(b, 1);
+
+    // Left wall quad: (aLB, aLT, bLT, bLB) facing inward (+right).
+    {
+      const base = outPos.length / 3;
+      outPos.push(aLB.x, aLB.y, aLB.z, aLT.x, aLT.y, aLT.z, bLT.x, bLT.y, bLT.z, bLB.x, bLB.y, bLB.z);
+      outIdx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    // Right wall quad: facing inward (-right).
+    {
+      const base = outPos.length / 3;
+      outPos.push(aRB.x, aRB.y, aRB.z, aRT.x, aRT.y, aRT.z, bRT.x, bRT.y, bRT.z, bRB.x, bRB.y, bRB.z);
+      outIdx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    }
+    // Ceiling quad: between the wall tops.
+    {
+      const base = outPos.length / 3;
+      outPos.push(aLT.x, aLT.y, aLT.z, aRT.x, aRT.y, aRT.z, bRT.x, bRT.y, bRT.z, bLT.x, bLT.y, bLT.z);
+      outIdx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    }
+  }
 }
 
 function pushCap(

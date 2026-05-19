@@ -36,7 +36,12 @@ export interface Segment {
   elevated: boolean;
   /** True if drivable ground sits beside the track here (used by M6). */
   groundBeside?: boolean;
+  /** True if this segment is wrapped in a tunnel — TrackBuilder emits side
+   *  walls + ceiling geometry over the ribbon (visual only, no physics). */
+  tunnel?: boolean;
 }
+
+export type TrackTheme = 'forest' | 'city';
 
 export interface Checkpoint {
   /** Gate sits at the end of this segment. */
@@ -70,4 +75,7 @@ export interface TrackDef {
    * cross-section of the first strip, so the ribbon visually closes.
    */
   closedLoop?: boolean;
+  /** Aesthetic theme: 'forest' (default — earth skirts, pine props,
+   *  mountain ridges) or 'city' (concrete piers, building props, skyline). */
+  theme?: TrackTheme;
 }

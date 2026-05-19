@@ -1,10 +1,20 @@
 import * as THREE from 'three';
+import type { CenterlineSample } from '../track/TrackBuilder';
 
 /**
  * Falling snow effect: a `Points` cloud of ~2500 round flakes around the car.
  * Each flake has its own slow drift velocity in X and Z so the whole cloud
  * doesn't tip in a single direction, plus a small per-flake Y fall speed.
  * The mesh re-anchors to the car's XZ each frame.
+ *
+ * The cloud is a low-altitude band in WORLD space (TOP_Y…BOTTOM_Y) — drive
+ * up onto a high section of track or a jump apex and the snow stays below
+ * you, like a real weather layer.
+ *
+ * Falling flakes are also culled by a tunnel mask built from the track's
+ * tunnel-flagged centerline samples: a flake that drops into a tunnel's XZ
+ * footprint AND is below its ceiling Y is respawned at the top, so the
+ * tunnel interior stays dry.
  *
  * Visuals: a generated circular alpha-disc point texture; `NormalBlending`
  * so the white flakes stand out against either dark night-style backdrops
@@ -13,11 +23,22 @@ import * as THREE from 'three';
 
 const COUNT = 2500;
 const RANGE_XZ = 30;
-const TOP_Y = 28;
-const BOTTOM_Y = -2;
+const TOP_Y = 8;     // cloud top in WORLD Y — high track sections poke above
+const BOTTOM_Y = -1; // cloud floor (just below the ground plane)
 const FALL_SPEED_MIN = 1.8;
 const FALL_SPEED_MAX = 3.6;
 const DRIFT_AMP = 0.9; // m/s side-to-side max drift
+/** Tunnel ceiling height above the ribbon top. Must match the value in
+ *  TrackBuilder.buildTunnelGeometry. */
+const TUNNEL_HEIGHT_M = 5.5;
+
+interface TunnelSample {
+  x: number;
+  z: number;
+  ceilingY: number;
+  /** Squared half-width of the tunnel at this sample (with a small margin). */
+  r2: number;
+}
 
 export class Snow {
   private readonly mesh: THREE.Points;
@@ -25,10 +46,32 @@ export class Snow {
   private readonly positions: Float32Array;
   /** Per-flake (fallSpeed, driftX, driftZ). */
   private readonly velocities: Float32Array;
+  private readonly tunnels: TunnelSample[] = [];
+  /** Cheap AABB cull before the per-sample tunnel test. */
+  private readonly tunnelAabb: { minX: number; maxX: number; minZ: number; maxZ: number } | null;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, centerline: readonly CenterlineSample[] = []) {
     this.positions = new Float32Array(COUNT * 3);
     this.velocities = new Float32Array(COUNT * 3);
+    // Build the tunnel mask from any centerline samples flagged tunnel.
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const s of centerline) {
+      if (!s.tunnel) continue;
+      const r = s.halfWidth + 1.0; // small margin so tunnel walls feel solid
+      this.tunnels.push({
+        x: s.x,
+        z: s.z,
+        ceilingY: s.topY + TUNNEL_HEIGHT_M,
+        r2: r * r,
+      });
+      if (s.x - r < minX) minX = s.x - r;
+      if (s.x + r > maxX) maxX = s.x + r;
+      if (s.z - r < minZ) minZ = s.z - r;
+      if (s.z + r > maxZ) maxZ = s.z + r;
+    }
+    this.tunnelAabb =
+      this.tunnels.length > 0 ? { minX, maxX, minZ, maxZ } : null;
+
     for (let i = 0; i < COUNT; i++) {
       this.spawnFlake(i, true);
     }
@@ -66,7 +109,7 @@ export class Snow {
     const z = (Math.random() - 0.5) * 2 * RANGE_XZ;
     const y = freshSpawn
       ? BOTTOM_Y + Math.random() * (TOP_Y - BOTTOM_Y)
-      : TOP_Y + Math.random() * 2;
+      : TOP_Y + Math.random() * 1.5;
     this.positions[o + 0] = x;
     this.positions[o + 1] = y;
     this.positions[o + 2] = z;
@@ -81,6 +124,7 @@ export class Snow {
     this.mesh.position.set(carX, 0, carZ);
     const pos = this.positions;
     const vel = this.velocities;
+    const aabb = this.tunnelAabb;
     for (let i = 0; i < COUNT; i++) {
       const o = i * 3;
       pos[o + 0] += vel[o + 1] * dt;
@@ -92,6 +136,26 @@ export class Snow {
         Math.abs(pos[o + 2]) > RANGE_XZ + 2
       ) {
         this.spawnFlake(i, false);
+        continue;
+      }
+      // Tunnel mask: if this flake's WORLD xz is inside a tunnel footprint
+      // AND its Y is below the tunnel ceiling, the tunnel roof is blocking
+      // it — respawn at the top. Cheap AABB cull first.
+      if (aabb !== null) {
+        const wx = carX + pos[o + 0];
+        const wz = carZ + pos[o + 2];
+        if (wx >= aabb.minX && wx <= aabb.maxX && wz >= aabb.minZ && wz <= aabb.maxZ) {
+          const wy = pos[o + 1]; // mesh.position.y is 0 → world Y = local Y
+          for (const t of this.tunnels) {
+            if (wy >= t.ceilingY) continue;
+            const dx = wx - t.x;
+            const dz = wz - t.z;
+            if (dx * dx + dz * dz < t.r2) {
+              this.spawnFlake(i, false);
+              break;
+            }
+          }
+        }
       }
     }
     (this.geo.attributes.position as THREE.BufferAttribute).needsUpdate = true;

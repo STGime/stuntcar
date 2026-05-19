@@ -5,6 +5,7 @@ import { PhysicsWorld } from './core/PhysicsWorld';
 import { Input } from './core/Input';
 import { buildScene, SUN_OFFSET } from './world/Scene';
 import { scatterRoadsideProps } from './world/Props';
+import { scatterCityProps } from './world/CityProps';
 import { House } from './world/HouseDecoration';
 import {
   WEATHER_PRESETS,
@@ -82,14 +83,20 @@ async function main(): Promise<void> {
   const physics = await PhysicsWorld.create();
   const input = new Input();
 
-  const { sun } = buildScene(engine.scene, physics.world, weather);
+  const theme = trackDef.theme ?? 'forest';
+  const { sun } = buildScene(engine.scene, physics.world, weather, theme);
   const track = buildTrack(engine.scene, physics.world, trackDef, {
     wet: !!weather.wet,
     trackFriction: weather.trackFriction,
+    urban: theme === 'city',
   });
-  scatterRoadsideProps(engine.scene, physics.world, track, trackDef.id);
+  if (theme === 'city') {
+    scatterCityProps(engine.scene, track, trackDef.id);
+  } else {
+    scatterRoadsideProps(engine.scene, physics.world, track, trackDef.id);
+  }
   const rain = weather.rain ? new Rain(engine.scene) : null;
-  const snow = weather.snow ? new Snow(engine.scene) : null;
+  const snow = weather.snow ? new Snow(engine.scene, track.centerline) : null;
   document.title = 'STUNTLINE';
 
   // Track 1 Easter-egg house at the circuit's centroid.
@@ -267,6 +274,7 @@ async function main(): Promise<void> {
   input.onPress('Digit1', () => gotoTrack(1));
   input.onPress('Digit2', () => gotoTrack(2));
   input.onPress('Digit3', () => gotoTrack(3));
+  input.onPress('Digit4', () => gotoTrack(4));
 
   const currentThrottle = (): number => {
     const accel = input.isDown('ArrowUp', 'KeyW');
