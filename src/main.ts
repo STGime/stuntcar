@@ -13,6 +13,7 @@ import {
   type WeatherChoice,
 } from './world/Weather';
 import { Rain } from './world/Rain';
+import { Snow } from './world/Snow';
 import { Car } from './vehicle/Car';
 import { CameraRig } from './camera/CameraRig';
 import { Hud } from './ui/Hud';
@@ -28,6 +29,7 @@ import { ReplayPlayer } from './replay/ReplayPlayer';
 import { ReplayCamera } from './replay/ReplayCamera';
 import { Menus, loadTransmission } from './ui/Menus';
 import { MiniMap } from './ui/MiniMap';
+import { loadSettings } from './ui/Settings';
 import { SkidEffects } from './fx/SkidEffects';
 import { BonusFloaters } from './fx/BonusFloaters';
 
@@ -73,15 +75,21 @@ async function main(): Promise<void> {
   const weatherChoice: WeatherChoice = validParam ? (weatherParam as WeatherChoice) : loadWeatherChoice();
   const weather = WEATHER_PRESETS[resolveWeatherChoice(weatherChoice)];
 
+  const settings = loadSettings();
+
   const engine = new Engine(container);
   engine.setExposure(weather.exposure);
   const physics = await PhysicsWorld.create();
   const input = new Input();
 
   const { sun } = buildScene(engine.scene, physics.world, weather);
-  const track = buildTrack(engine.scene, physics.world, trackDef, { wet: !!weather.wet });
+  const track = buildTrack(engine.scene, physics.world, trackDef, {
+    wet: !!weather.wet,
+    trackFriction: weather.trackFriction,
+  });
   scatterRoadsideProps(engine.scene, physics.world, track, trackDef.id);
   const rain = weather.rain ? new Rain(engine.scene) : null;
+  const snow = weather.snow ? new Snow(engine.scene) : null;
   document.title = 'STUNTLINE';
 
   // Track 1 Easter-egg house at the circuit's centroid.
@@ -107,7 +115,9 @@ async function main(): Promise<void> {
   car.setHeadlights(weather.id === 'night');
   if (weather.slipFactor !== undefined) car.setGripFactor(weather.slipFactor);
 
-  const camera = new CameraRig();
+  const camera = new CameraRig(settings.fov);
+  camera.rollEnabled = settings.cameraRoll;
+  camera.shakeEnabled = settings.cameraShake;
   engine.setCamera(camera.camera);
   engine.enablePostFX();
 
@@ -131,13 +141,17 @@ async function main(): Promise<void> {
 
   const hud = new Hud(document.body);
   hud.setResultCallbacks({ onRetry: gotoRetry, onTrackSelect: gotoTracks, onMenu: gotoMenu });
-  const miniMap = new MiniMap(document.body, track.centerline, {
-    x: track.spawn.position.x,
-    z: track.spawn.position.z,
-  });
+  const miniMap = new MiniMap(
+    document.body,
+    track.centerline,
+    { x: track.spawn.position.x, z: track.spawn.position.z },
+    settings.miniMap,
+  );
 
   const engineSound = new EngineSound();
+  if (settings.audioMuted) engineSound.setMuted(true);
   const sfx = new Sfx();
+  if (settings.audioMuted) sfx.setMuted(true);
   const skidFx = new SkidEffects(engine.scene);
   const bonusFloaters = new BonusFloaters(engine.scene);
 
@@ -408,12 +422,15 @@ async function main(): Promise<void> {
       bonusFloaters.update(frameDt, camera.camera.position);
       race.checkpoints.animate(performance.now() / 1000);
       easterEggHouse?.update(performance.now() / 1000, camera.camera.position);
-      if (rain) {
+      if (rain || snow) {
         const cp = car.chassisView.object.position;
-        rain.update(frameDt, cp.x, cp.z);
+        rain?.update(frameDt, cp.x, cp.z);
+        snow?.update(frameDt, cp.x, cp.z);
       }
       // Drive the speed-blur post pass. Ramps in past 120 km/h, full by 220.
-      const speedT = Math.max(0, Math.min(1, (car.speedKmh - 120) / 100));
+      const speedT = settings.speedBlur
+        ? Math.max(0, Math.min(1, (car.speedKmh - 120) / 100))
+        : 0;
       engine.setSpeedFx(speedT);
 
       const carPos = car.chassisView.object.position;

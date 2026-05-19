@@ -7,7 +7,7 @@ import * as THREE from 'three';
  * scene-build time.
  */
 
-export type WeatherId = 'day' | 'overcast' | 'sunset' | 'night' | 'rain';
+export type WeatherId = 'day' | 'overcast' | 'sunset' | 'night' | 'rain' | 'snow';
 /** Includes the special 'random' option (UI / storage only — resolved to a
  *  real WeatherId via `resolveWeatherChoice`). */
 export type WeatherChoice = WeatherId | 'random';
@@ -40,6 +40,10 @@ export interface WeatherPreset {
   slipFactor?: number;
   /** True if the rain particle system should spawn. */
   rain?: boolean;
+  /** True if the snow particle system should spawn. */
+  snow?: boolean;
+  /** Override the trimesh collider friction on the ribbon (defaults to 1.1). */
+  trackFriction?: number;
 }
 
 export const WEATHER_PRESETS: Record<WeatherId, WeatherPreset> = {
@@ -129,7 +133,28 @@ export const WEATHER_PRESETS: Record<WeatherId, WeatherPreset> = {
     exposure: 1.1,
     wet: true,
     slipFactor: 0.68, // softened — corners drift, but not on ice
+    trackFriction: 0.78,
     rain: true,
+  },
+  snow: {
+    id: 'snow',
+    label: 'Snow',
+    sunOffset: new THREE.Vector3(45, 95, 25),
+    sunColor: 0xeaf0f5,
+    sunIntensity: 1.2,
+    hemiSky: 0xcfd6dd,
+    hemiGround: 0x70747a,
+    hemiIntensity: 1.45,
+    skyTop: 0xa6b1bd,
+    skyHorizon: 0xd0d4d8,
+    skySunColor: new THREE.Color(0.7, 0.7, 0.78),
+    fogColor: 0xc0c6cc,
+    fogNear: 60,
+    fogFar: 300,
+    exposure: 1.02,
+    slipFactor: 0.62, // icy — but corners stay drivable
+    trackFriction: 0.6,
+    snow: true,
   },
 };
 

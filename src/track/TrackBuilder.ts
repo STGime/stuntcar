@@ -70,8 +70,10 @@ interface CrossSection {
  */
 export interface BuildTrackOptions {
   /** True when the active weather is rain — TrackBuilder darkens + glosses
-   *  the ribbon top and lowers the trimesh collider friction. */
+   *  the ribbon top. */
   wet?: boolean;
+  /** Override the trimesh collider friction. Defaults to 1.1. */
+  trackFriction?: number;
 }
 
 export function buildTrack(
@@ -315,6 +317,7 @@ export function buildTrack(
     strips,
     def.closedLoop ?? false,
     options.wet ?? false,
+    options.trackFriction ?? 1.1,
   );
 
   return { spawn, checkpoints, finish, minY, collider, centerline };
@@ -345,6 +348,7 @@ function buildStripMeshes(
   strips: CrossSection[][],
   closedLoop: boolean,
   wet: boolean,
+  trackFriction: number,
 ): RAPIER.Collider | null {
   // Wet ribbon: darker, glossier (lower roughness + a touch of metalness) so
   // the directional sun + sky reflection read as a damp sheen.
@@ -701,7 +705,7 @@ function buildStripMeshes(
     RAPIER.ColliderDesc.trimesh(
       new Float32Array(allPositions),
       new Uint32Array(allIndices),
-    ).setFriction(wet ? 0.78 : 1.1),
+    ).setFriction(trackFriction),
     body,
   );
 

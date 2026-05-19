@@ -21,6 +21,7 @@ export class MiniMap {
     container: HTMLElement,
     centerline: CenterlineSample[],
     spawn: { x: number; z: number },
+    visible: boolean = true,
   ) {
     if (centerline.length === 0) {
       this.carDot = document.createElementNS(SVG_NS, 'circle');
@@ -52,6 +53,7 @@ export class MiniMap {
     injectStyles();
     const root = document.createElement('div');
     root.id = 'minimap';
+    if (!visible) root.style.display = 'none';
     container.appendChild(root);
 
     const svg = document.createElementNS(SVG_NS, 'svg');

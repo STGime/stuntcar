@@ -1,4 +1,6 @@
 import { TRACKS } from '../track/tracks';
+import { previewCenterline } from '../track/previewCenterline';
+import type { TrackDef } from '../track/TrackTypes';
 import { loadLeaderboard } from '../race/Leaderboard';
 import {
   WEATHER_PRESETS,
@@ -6,6 +8,7 @@ import {
   saveWeatherChoice,
   type WeatherChoice,
 } from '../world/Weather';
+import { openSettingsModal } from './Settings';
 
 const TRANSMISSION_STORAGE_KEY = 'stuntline:transmission';
 
@@ -67,13 +70,21 @@ export class Menus {
         <div class="menu-eyebrow">PROTOTYPE</div>
         <div class="menu-title">STUNTLINE</div>
         <div class="menu-subtitle">stunt circuit racing in your browser</div>
-        <button class="menu-btn primary" data-action="start">Start</button>
+        <div class="menu-btn-row">
+          <button class="menu-btn primary" data-action="start">Start</button>
+          <button class="menu-btn secondary" data-action="settings">Settings</button>
+        </div>
         <div class="menu-hint">arrows / W A S D drive · C camera · M mute</div>
       </div>
     `;
     this.root
       .querySelector<HTMLButtonElement>('[data-action="start"]')
       ?.addEventListener('click', () => navigate('?screen=tracks'));
+    this.root
+      .querySelector<HTMLButtonElement>('[data-action="settings"]')
+      ?.addEventListener('click', () => {
+        void openSettingsModal(document.body);
+      });
   }
 
   private renderTrackSelect(): void {
@@ -94,10 +105,12 @@ export class Menus {
                 `</div>`,
             )
             .join('');
+      const previewSvg = renderTrackPreview(track);
       return `
         <button class="track-card" data-track="${idx + 1}" data-difficulty="${track.difficulty}">
           <div class="track-card-num">${idx + 1}</div>
           <div class="track-card-name">${track.name}</div>
+          <div class="track-card-preview">${previewSvg}</div>
           <div class="track-card-meta">
             <span class="track-card-diff diff-${track.difficulty}">${track.difficulty}</span>
             <span class="track-card-best">${best === null ? 'no time yet' : `best ${fmt(best)}s`}</span>
@@ -185,6 +198,44 @@ function navigate(query: string): void {
   location.assign(url.toString());
 }
 
+function renderTrackPreview(track: TrackDef): string {
+  const pts = previewCenterline(track);
+  if (pts.length < 2) return '';
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.z < minZ) minZ = p.z;
+    if (p.z > maxZ) maxZ = p.z;
+  }
+  const size = 130;
+  const margin = 10;
+  const w = maxX - minX || 1;
+  const h = maxZ - minZ || 1;
+  const inner = size - margin * 2;
+  const scale = Math.min(inner / w, inner / h);
+  const mapW = w * scale;
+  const mapH = h * scale;
+  const offX = (size - mapW) / 2 - minX * scale;
+  const offZ = (size - mapH) / 2 - minZ * scale;
+  const d = pts
+    .map((p, i) => {
+      const x = (p.x * scale + offX).toFixed(1);
+      const y = (p.z * scale + offZ).toFixed(1);
+      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+    })
+    .join(' ');
+  const spawnX = (pts[0].x * scale + offX).toFixed(1);
+  const spawnY = (pts[0].z * scale + offZ).toFixed(1);
+  return `
+    <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" class="tp-svg">
+      <path d="${d}" class="tp-shadow" />
+      <path d="${d}" class="tp-line" />
+      <circle cx="${spawnX}" cy="${spawnY}" r="3" class="tp-spawn" />
+    </svg>
+  `;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -260,6 +311,12 @@ function injectStyles(): void {
     }
     .menu-btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
     .menu-btn:active { transform: translateY(0); }
+    .menu-btn-row {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+    .menu-btn-row .menu-btn.secondary { margin-top: 0; }
     .menu-hint {
       font-size: 11px;
       letter-spacing: 1.5px;
@@ -347,6 +404,37 @@ function injectStyles(): void {
       letter-spacing: 1.5px;
       color: #6b7689;
       font-style: italic;
+    }
+
+    .track-card-preview {
+      display: flex;
+      justify-content: center;
+      margin: 6px 0 10px;
+    }
+    .tp-svg {
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .tp-shadow {
+      fill: none;
+      stroke: rgba(0, 0, 0, 0.6);
+      stroke-width: 5;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }
+    .tp-line {
+      fill: none;
+      stroke: #ffd166;
+      stroke-width: 2.5;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }
+    .track-card:hover .tp-line { stroke: #4fff8a; }
+    .tp-spawn {
+      fill: #4fff8a;
+      stroke: rgba(0,0,0,0.6);
+      stroke-width: 1;
     }
 
     .trans-row {

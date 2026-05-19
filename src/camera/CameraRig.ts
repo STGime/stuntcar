@@ -39,9 +39,18 @@ export class CameraRig {
   private roll = 0;
   private readonly rightVec = new THREE.Vector3();
 
-  constructor() {
-    this.camera = new THREE.PerspectiveCamera(62, 1, 0.1, 800);
+  /** Player-settable behaviour. */
+  rollEnabled = true;
+  shakeEnabled = true;
+
+  constructor(fovDeg = 62) {
+    this.camera = new THREE.PerspectiveCamera(fovDeg, 1, 0.1, 800);
     this.camera.position.set(0, 6, -12);
+  }
+
+  setFov(deg: number): void {
+    this.camera.fov = deg;
+    this.camera.updateProjectionMatrix();
   }
 
   toggleView(): void {
@@ -55,6 +64,7 @@ export class CameraRig {
 
   /** Add to the camera's trauma value (caps at 1). Trauma squared = shake amplitude. */
   addTrauma(amount: number): void {
+    if (!this.shakeEnabled) return;
     this.trauma = Math.min(1, this.trauma + amount);
   }
 
@@ -74,7 +84,9 @@ export class CameraRig {
         linvel.x * this.rightVec.x +
         linvel.y * this.rightVec.y +
         linvel.z * this.rightVec.z;
-      const targetRoll = Math.max(-0.10, Math.min(0.10, -lateral * 0.012));
+      const targetRoll = this.rollEnabled
+        ? Math.max(-0.10, Math.min(0.10, -lateral * 0.012))
+        : 0;
       const kRoll = 1 - Math.exp(-6 * dt);
       this.roll += (targetRoll - this.roll) * kRoll;
 

@@ -13,6 +13,8 @@ export class Sfx {
   private ctx: AudioContext | null = null;
   // Sustained tire-screech graph (built once on `start`).
   private screechGain: GainNode | null = null;
+  private masterGain: GainNode | null = null;
+  private muted = false;
 
   start(): void {
     if (!this.ctx) {
@@ -21,11 +23,29 @@ export class Sfx {
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!Ctx) return;
       this.ctx = new Ctx();
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.muted ? 0 : 1;
+      this.masterGain.connect(this.ctx.destination);
       this.buildScreech();
     }
     // Always try to resume — modern browsers create contexts in 'suspended'
     // state when not under an interactive gesture chain.
     this.ctx.resume();
+  }
+
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(
+        muted ? 0 : 1,
+        this.ctx.currentTime,
+        0.04,
+      );
+    }
+  }
+
+  private output(): AudioNode {
+    return this.masterGain ?? this.ctx!.destination;
   }
 
   /** Build the persistent tire-screech graph: bandpass-filtered noise mixed
@@ -65,7 +85,7 @@ export class Sfx {
 
     noise.connect(noiseBp).connect(noiseGain).connect(master);
     osc.connect(oscBp).connect(oscGain).connect(master);
-    master.connect(this.ctx.destination);
+    master.connect(this.output());
 
     noise.start();
     osc.start();
@@ -114,7 +134,7 @@ export class Sfx {
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(0.35, now + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-    osc.connect(gain).connect(this.ctx.destination);
+    osc.connect(gain).connect(this.output());
     osc.start(now);
     osc.stop(now + 0.45);
   }
@@ -130,7 +150,7 @@ export class Sfx {
     g.gain.setValueAtTime(0.0001, now);
     g.gain.exponentialRampToValueAtTime(gain, now + 0.01);
     g.gain.exponentialRampToValueAtTime(0.001, now + durSec);
-    osc.connect(g).connect(this.ctx.destination);
+    osc.connect(g).connect(this.output());
     osc.start(now);
     osc.stop(now + durSec + 0.02);
   }
