@@ -778,6 +778,11 @@ function buildStripMeshes(
       appendToCollider(skirtAllPos, skirtAllIdx, leftSkirtPos, leftSkirtIdx);
       appendToCollider(skirtAllPos, skirtAllIdx, rightSkirtPos, rightSkirtIdx);
       appendToCollider(skirtAllPos, skirtAllIdx, skirtCapPos, skirtCapIdx);
+    } else if (tunnelPos.length > 0) {
+      // Tunnel walls + ceiling get their own trimesh collider (distinct
+      // handle from the ribbon, so off-track logic stays correct). The
+      // car can no longer drive through the tunnel walls.
+      appendToCollider(skirtAllPos, skirtAllIdx, tunnelPos, tunnelIdx);
     }
   }
 
