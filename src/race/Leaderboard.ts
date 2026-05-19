@@ -55,9 +55,18 @@ export function loadLeaderboard(trackId: string): LeaderboardEntry[] {
 
 /** True if `timeSec` would land in the top 10 for this track. */
 export function qualifies(trackId: string, timeSec: number): boolean {
+  return projectedRank(trackId, timeSec) !== null;
+}
+
+/** Returns the 1-based position `timeSec` WOULD occupy if submitted now,
+ *  or `null` if it falls outside the top `MAX_ENTRIES`. */
+export function projectedRank(trackId: string, timeSec: number): number | null {
   const list = loadLeaderboard(trackId);
-  if (list.length < MAX_ENTRIES) return true;
-  return timeSec < list[list.length - 1].timeSec;
+  let rank = 1;
+  for (const e of list) {
+    if (e.timeSec < timeSec) rank += 1;
+  }
+  return rank <= MAX_ENTRIES ? rank : null;
 }
 
 /** Insert a new entry and persist. Returns the updated list + new entry's index. */

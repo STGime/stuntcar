@@ -1,7 +1,7 @@
 import { CarConfig } from '../vehicle/CarConfig';
 import {
   loadLeaderboard,
-  qualifies,
+  projectedRank,
   submitScore,
   NAME_LEN,
   type LeaderboardEntry,
@@ -114,6 +114,7 @@ export class Hud {
   private newEntryIndex: number | null = null;
   private currentTrackId: string | null = null;
   private pendingFinishTimeSec: number | null = null;
+  private pendingRank: number | null = null;
   private lastBannerLap = 1;
 
   constructor(container: HTMLElement) {
@@ -394,19 +395,19 @@ export class Hud {
     // First render at this result state: decide whether to show name entry.
     if (!this.resultShown) {
       this.resultShown = true;
-      if (
-        r.state === 'finished' &&
-        r.finishTimeSec !== null &&
-        qualifies(r.trackId, r.finishTimeSec)
-      ) {
-        this.nameEntryActive = true;
-        this.pendingFinishTimeSec = r.finishTimeSec;
-        // Auto-focus so the player can type immediately. Defer until the
-        // modal is in the DOM with display:flex.
-        queueMicrotask(() => {
-          this.modalNameInput.value = '';
-          this.modalNameInput.focus();
-        });
+      if (r.state === 'finished' && r.finishTimeSec !== null) {
+        const rank = projectedRank(r.trackId, r.finishTimeSec);
+        if (rank !== null) {
+          this.nameEntryActive = true;
+          this.pendingFinishTimeSec = r.finishTimeSec;
+          this.pendingRank = rank;
+          // Auto-focus so the player can type immediately. Defer until the
+          // modal is in the DOM with display:flex.
+          queueMicrotask(() => {
+            this.modalNameInput.value = '';
+            this.modalNameInput.focus();
+          });
+        }
       }
     }
 
@@ -414,9 +415,11 @@ export class Hud {
       this.modalTitle.textContent = 'FINISH';
       this.modalTitle.className = 'race-modal-title finish';
       this.modalTime.textContent = formatTime(r.finishTimeSec ?? r.elapsedSec);
-      if (this.nameEntryActive && !this.nameSubmitted) {
-        this.modalSub.textContent = 'NEW HIGH SCORE!';
+      if (this.nameEntryActive && !this.nameSubmitted && this.pendingRank !== null) {
+        this.modalSub.textContent = `${ordinal(this.pendingRank)} BEST TIME!`;
         this.modalSub.className = 'race-modal-sub best';
+      } else if (this.nameSubmitted) {
+        // Post-submit text was set in submitName() — leave it.
       } else if (r.newBest) {
         this.modalSub.textContent = 'NEW BEST TIME!';
         this.modalSub.className = 'race-modal-sub best';
@@ -456,7 +459,8 @@ export class Hud {
     this.newEntryIndex = newIndex;
     this.nameSubmitted = true;
     this.modalNameRow.style.display = 'none';
-    this.modalSub.textContent = 'HIGH SCORE SAVED';
+    const finalRank = newIndex + 1;
+    this.modalSub.textContent = `${ordinal(finalRank)} BEST TIME — SAVED`;
     this.modalSub.className = 'race-modal-sub best';
     this.renderLeaderboard(this.currentTrackId);
   }
@@ -489,6 +493,7 @@ export class Hud {
       this.nameSubmitted = false;
       this.newEntryIndex = null;
       this.pendingFinishTimeSec = null;
+      this.pendingRank = null;
       this.modalNameRow.style.display = 'none';
       this.modalNameInput.value = '';
     }
@@ -515,6 +520,16 @@ function escapeHtml(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function ordinal(n: number): string {
+  if (n >= 11 && n <= 13) return `${n}TH`;
+  switch (n % 10) {
+    case 1: return `${n}ST`;
+    case 2: return `${n}ND`;
+    case 3: return `${n}RD`;
+    default: return `${n}TH`;
+  }
 }
 
 function formatTime(seconds: number): string {
