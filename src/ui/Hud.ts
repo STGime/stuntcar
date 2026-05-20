@@ -28,6 +28,8 @@ interface GaugeOpts {
 interface Gauge {
   needle: SVGElement;
   digital: SVGTextElement;
+  /** Outer container; the consumer hides this to remove the gauge. */
+  wrap: HTMLElement;
   min: number;
   max: number;
   cx: number;
@@ -40,6 +42,11 @@ interface HudState {
   gear: string;
   mode: 'A' | 'M';
   onLimiter: boolean;
+  /** True if the active vehicle has an EV drivetrain. Drives the tach ↔
+   *  power-bar swap. */
+  electric?: boolean;
+  /** -1..1 normalised power (positive = drive, negative = regen). EV-only. */
+  powerT?: number;
 }
 
 export interface HudRaceState {
@@ -93,6 +100,10 @@ export class Hud {
   private readonly offTrackEl: HTMLElement;
   private readonly lapBannerEl: HTMLElement;
   private readonly quitBtn: HTMLButtonElement;
+  // EV power bar (only shown when the active vehicle is electric).
+  private readonly powerBar: HTMLElement;
+  private readonly powerFillPositive: HTMLElement;
+  private readonly powerFillNegative: HTMLElement;
   private readonly resultBtnRetry: HTMLButtonElement;
   private readonly resultBtnTracks: HTMLButtonElement;
   private readonly resultBtnMenu: HTMLButtonElement;
@@ -295,6 +306,27 @@ export class Hud {
       formatTick: (v) => String(v / 1000),
     });
 
+    // EV power bar (hidden on combustion). Two stacked fill divs growing
+    // from the centre — green for drive, red for regen.
+    this.powerBar = document.createElement('div');
+    this.powerBar.className = 'hud-powerbar';
+    this.powerBar.style.display = 'none';
+    const powerCard = document.createElement('div');
+    powerCard.className = 'hud-powerbar-card';
+    this.powerBar.appendChild(powerCard);
+    this.powerFillNegative = document.createElement('div');
+    this.powerFillNegative.className = 'hud-powerbar-fill regen';
+    powerCard.appendChild(this.powerFillNegative);
+    this.powerFillPositive = document.createElement('div');
+    this.powerFillPositive.className = 'hud-powerbar-fill drive';
+    powerCard.appendChild(this.powerFillPositive);
+    const powerLabel = document.createElement('div');
+    powerLabel.className = 'hud-powerbar-label';
+    powerLabel.innerHTML =
+      '<span>REGEN</span><span>POWER</span><span>DRIVE</span>';
+    this.powerBar.appendChild(powerLabel);
+    gauges.appendChild(this.powerBar);
+
     const speedMax = 260;
     this.speedo = makeGauge(gauges, {
       label: 'km/h',
@@ -322,17 +354,30 @@ export class Hud {
   }
 
   update(s: HudState): void {
-    setNeedle(this.tach, s.rpm);
-    this.tach.digital.textContent = Math.round(s.rpm).toString();
+    const electric = !!s.electric;
+
+    // Tach + rev-limiter belong to the combustion drivetrain only.
+    if (electric) {
+      if (this.tach.wrap.style.display !== 'none') this.tach.wrap.style.display = 'none';
+      if (this.powerBar.style.display !== '') this.powerBar.style.display = '';
+      const p = Math.max(-1, Math.min(1, s.powerT ?? 0));
+      this.powerFillPositive.style.width = `${Math.max(0, p) * 50}%`;
+      this.powerFillNegative.style.width = `${Math.max(0, -p) * 50}%`;
+      this.limiterEl.classList.remove('on');
+    } else {
+      if (this.tach.wrap.style.display === 'none') this.tach.wrap.style.display = '';
+      if (this.powerBar.style.display !== 'none') this.powerBar.style.display = 'none';
+      setNeedle(this.tach, s.rpm);
+      this.tach.digital.textContent = Math.round(s.rpm).toString();
+      this.limiterEl.classList.toggle('on', s.onLimiter);
+    }
 
     setNeedle(this.speedo, s.speedKmh);
     this.speedo.digital.textContent = Math.round(s.speedKmh).toString();
 
     if (this.gearEl.textContent !== s.gear) this.gearEl.textContent = s.gear;
-    const modeLabel = s.mode === 'A' ? 'AUTO' : 'MANUAL';
+    const modeLabel = electric ? 'EV' : s.mode === 'A' ? 'AUTO' : 'MANUAL';
     if (this.modeEl.textContent !== modeLabel) this.modeEl.textContent = modeLabel;
-
-    this.limiterEl.classList.toggle('on', s.onLimiter);
   }
 
   setReplayActive(active: boolean): void {
@@ -639,7 +684,7 @@ function makeGauge(parent: HTMLElement, opts: GaugeOpts): Gauge {
   caption.textContent = opts.label;
   svg.appendChild(caption);
 
-  return { needle, digital, min, max, cx, cy };
+  return { needle, digital, wrap, min, max, cx, cy };
 }
 
 function setNeedle(g: Gauge, value: number): void {
@@ -753,6 +798,61 @@ function injectStyles(): void {
       letter-spacing: 1.5px;
       font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     }
+    .hud-powerbar {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: stretch;
+      background: rgba(12, 16, 24, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 16px 18px;
+      width: 180px;
+    }
+    .hud-powerbar-card {
+      position: relative;
+      width: 100%;
+      height: 22px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .hud-powerbar-card::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: rgba(255, 255, 255, 0.35);
+    }
+    .hud-powerbar-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      transition: width 0.05s linear;
+    }
+    .hud-powerbar-fill.drive {
+      left: 50%;
+      background: linear-gradient(90deg, #4fd1c5, #4fff8a);
+      box-shadow: 0 0 12px rgba(79, 209, 197, 0.55);
+    }
+    .hud-powerbar-fill.regen {
+      right: 50%;
+      background: linear-gradient(270deg, #ffaa3a, #ff4f4f);
+      box-shadow: 0 0 12px rgba(255, 79, 79, 0.45);
+    }
+    .hud-powerbar-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      color: #8892a8;
+    }
+    .hud-powerbar-label span:nth-child(2) { color: #4fd1c5; font-weight: 700; }
+
     .hud-status {
       display: flex;
       flex-direction: column;

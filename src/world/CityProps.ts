@@ -184,6 +184,62 @@ export function scatterCityProps(
 
   // --- Streetlights along the inside edge of the ribbon -------------------
   buildStreetlights(scene, centerline);
+
+  // --- Ceiling lights inside any tunnel sections --------------------------
+  buildTunnelCeilingLights(scene, centerline);
+}
+
+/**
+ * Warm yellow ceiling lights for tunnel-flagged sections — a flat bulb disc
+ * mounted on the tunnel ceiling every ~12 m, with a soft PointLight that
+ * fills the surrounding tunnel volume. Almost invisible in day exposure but
+ * clearly illuminates the tunnel walls at night.
+ */
+function buildTunnelCeilingLights(
+  scene: THREE.Scene,
+  centerline: Array<{ x: number; z: number; halfWidth: number; tunnel: boolean; topY: number }>,
+): void {
+  const TUNNEL_HEIGHT_M = 5.5; // must match TrackBuilder.buildTunnelGeometry
+  const STEP_M = 12;
+  const HANG_DOWN = 0.4; // bulb sits just below the ceiling
+  const bulbMat = new THREE.MeshStandardMaterial({
+    color: 0xfff1c0,
+    emissive: 0xffd58a,
+    emissiveIntensity: 3.0,
+    roughness: 0.35,
+    toneMapped: true,
+  });
+  const bulbGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.08, 12);
+  let accum = STEP_M; // place first light a step in
+  for (let i = 1; i < centerline.length; i++) {
+    const a = centerline[i - 1];
+    const b = centerline[i];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const segLen = Math.hypot(dx, dz);
+    if (segLen < 1e-3) continue;
+    if (!(a.tunnel && b.tunnel)) {
+      // Reset accumulator at tunnel boundaries so we don't drop a light
+      // partly outside the tunnel.
+      accum = STEP_M;
+      continue;
+    }
+    accum += segLen;
+    if (accum < STEP_M) continue;
+    accum = 0;
+
+    const cx = (a.x + b.x) / 2;
+    const cz = (a.z + b.z) / 2;
+    const ceilingY = ((a.topY + b.topY) / 2) + TUNNEL_HEIGHT_M - HANG_DOWN;
+
+    const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+    bulb.position.set(cx, ceilingY, cz);
+    scene.add(bulb);
+
+    const light = new THREE.PointLight(0xffd58a, 35, 18, 1.8);
+    light.position.set(cx, ceilingY - 0.2, cz);
+    scene.add(light);
+  }
 }
 
 function buildStreetlights(

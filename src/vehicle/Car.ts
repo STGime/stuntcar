@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CarConfig } from './CarConfig';
 import { Drivetrain } from './Drivetrain';
+import { VEHICLES, type VehicleProfile } from './VehicleConfigs';
 import { BodyView } from '../core/BodyView';
 import type { Input } from '../core/Input';
 
@@ -27,7 +28,8 @@ function moveToward(current: number, target: number, maxDelta: number): number {
  */
 export class Car {
   readonly chassisView: BodyView;
-  readonly drivetrain = new Drivetrain();
+  readonly drivetrain: Drivetrain;
+  readonly profile: VehicleProfile;
   speedKmh = 0;
   forwardVel = 0;
   /** True when at least one driven wheel is in ground contact this step. */
@@ -66,16 +68,18 @@ export class Car {
   private readonly steerQuat = new THREE.Quaternion();
   private readonly spinQuat = new THREE.Quaternion();
 
-  constructor(scene: THREE.Scene, world: RAPIER.World) {
+  constructor(scene: THREE.Scene, world: RAPIER.World, profile: VehicleProfile = VEHICLES.ice) {
     const c = CarConfig;
+    this.profile = profile;
+    this.drivetrain = new Drivetrain(profile);
 
     // --- Chassis rigid body --------------------------------------------------
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(c.spawn.x, c.spawn.y, c.spawn.z)
       .setCanSleep(false) // a controlled vehicle must never sleep
       .setCcdEnabled(true) // avoid tunnelling through track at speed
-      .setLinearDamping(c.linearDamping)
-      .setAngularDamping(c.angularDamping);
+      .setLinearDamping(profile.linearDamping)
+      .setAngularDamping(profile.angularDamping);
     this.body = world.createRigidBody(bodyDesc);
     this.chassisBody = this.body;
 
@@ -84,7 +88,7 @@ export class Car {
       c.chassisHalfExtents.y,
       c.chassisHalfExtents.z,
     )
-      .setMass(c.mass)
+      .setMass(profile.mass)
       .setFriction(0.6);
     this.chassisCollider = world.createCollider(colliderDesc, this.body);
 
@@ -96,9 +100,9 @@ export class Car {
     const hx = c.chassisHalfExtents.x; // 0.9
     const hy = c.chassisHalfExtents.y; // 0.5
     const hz = c.chassisHalfExtents.z; // 2.0
-    const bodyColor = 0xd8423a;
-    const trim = 0x1a1f28;
-    const glassColor = 0x131820;
+    const bodyColor = profile.bodyColor;
+    const trim = profile.trimColor;
+    const glassColor = profile.glassColor;
 
     const paintMat = new THREE.MeshStandardMaterial({
       color: bodyColor,
@@ -215,14 +219,14 @@ export class Car {
 
     // Head + tail lights (small emissive squares).
     const headlightMat = new THREE.MeshStandardMaterial({
-      color: 0xfff3c4,
-      emissive: 0xfff3c4,
+      color: profile.headlightColor,
+      emissive: profile.headlightColor,
       emissiveIntensity: 0.6,
       roughness: 0.3,
     });
     const taillightMat = new THREE.MeshStandardMaterial({
-      color: 0xff4f4f,
-      emissive: 0xff4f4f,
+      color: profile.taillightColor,
+      emissive: profile.taillightColor,
       emissiveIntensity: 0.5,
       roughness: 0.4,
     });
@@ -241,7 +245,7 @@ export class Car {
     // to the car instead of staying world-fixed.
     for (const side of [-1, 1] as const) {
       const beam = new THREE.SpotLight(
-        0xfff3c4,
+        profile.headlightColor,
         0, // intensity (off until enabled)
         35, // distance
         0.55, // cone half-angle (~31°)
@@ -309,7 +313,7 @@ export class Car {
     for (const m of this.cockpitOnly) m.visible = false;
 
     // Door number decals + side stripe — give the car a bit of identity.
-    const numberTex = makeNumberDecalTexture('67');
+    const numberTex = makeNumberDecalTexture(profile.decalNumber);
     const numberMat = new THREE.MeshBasicMaterial({
       map: numberTex,
       transparent: true,
@@ -358,12 +362,12 @@ export class Car {
         c.suspensionRestLength,
         c.wheelRadius,
       );
-      this.controller.setWheelSuspensionStiffness(i, c.suspensionStiffness);
+      this.controller.setWheelSuspensionStiffness(i, profile.suspensionStiffness);
       this.controller.setWheelSuspensionCompression(i, c.suspensionCompression);
       this.controller.setWheelSuspensionRelaxation(i, c.suspensionRelaxation);
       this.controller.setWheelMaxSuspensionTravel(i, c.maxSuspensionTravel);
-      this.controller.setWheelMaxSuspensionForce(i, c.maxSuspensionForce);
-      this.controller.setWheelFrictionSlip(i, c.frictionSlip);
+      this.controller.setWheelMaxSuspensionForce(i, profile.maxSuspensionForce);
+      this.controller.setWheelFrictionSlip(i, profile.frictionSlip);
 
       const wheelMesh = new THREE.Mesh(
         wheelGeo,
@@ -417,7 +421,7 @@ export class Car {
   /** Scale all four wheels' frictionSlip by `factor`. < 1 makes the car
    *  slide in corners (used by the rain weather preset). */
   setGripFactor(factor: number): void {
-    const base = CarConfig.frictionSlip;
+    const base = this.profile.frictionSlip;
     for (let i = 0; i < CarConfig.wheels.length; i++) {
       this.controller.setWheelFrictionSlip(i, base * factor);
     }

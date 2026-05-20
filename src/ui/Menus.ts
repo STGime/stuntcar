@@ -9,6 +9,12 @@ import {
   type WeatherChoice,
 } from '../world/Weather';
 import { openSettingsModal } from './Settings';
+import {
+  VEHICLES,
+  loadVehicleId,
+  saveVehicleId,
+  type VehicleId,
+} from '../vehicle/VehicleConfigs';
 
 const TRANSMISSION_STORAGE_KEY = 'stuntline:transmission';
 
@@ -90,6 +96,7 @@ export class Menus {
   private renderTrackSelect(): void {
     const trans = loadTransmission();
     const weather = loadWeatherChoice();
+    const vehicle = loadVehicleId();
     const cards = TRACKS.map((track, idx) => {
       const best = loadBestTimeSec(track.id);
       const top = loadLeaderboard(track.id).slice(0, 3);
@@ -128,6 +135,17 @@ export class Menus {
         <div class="menu-eyebrow">SELECT TRACK</div>
         <div class="track-cards">${cards}</div>
         <div class="trans-row">
+          <span class="trans-label">VEHICLE</span>
+          <div class="trans-toggle" role="radiogroup">
+            ${Object.values(VEHICLES)
+              .map(
+                (v) =>
+                  `<button class="trans-opt ${vehicle === v.id ? 'active' : ''}" data-vehicle="${v.id}">${v.label}</button>`,
+              )
+              .join('')}
+          </div>
+        </div>
+        <div class="trans-row trans-row-transmission" ${vehicle === 'ev' ? 'style="opacity:0.45;pointer-events:none"' : ''}>
           <span class="trans-label">TRANSMISSION</span>
           <div class="trans-toggle" role="radiogroup">
             <button class="trans-opt ${trans === 'automatic' ? 'active' : ''}" data-trans="automatic">Automatic</button>
@@ -173,12 +191,33 @@ export class Menus {
       }),
     );
 
+    let selectedVehicle: VehicleId = vehicle;
+    const vehicleButtons = this.root.querySelectorAll<HTMLButtonElement>('[data-vehicle]');
+    const transRow = this.root.querySelector<HTMLElement>('.trans-row-transmission');
+    vehicleButtons.forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.vehicle as VehicleId | undefined;
+        if (id && id in VEHICLES) {
+          selectedVehicle = id;
+          vehicleButtons.forEach((b) => b.classList.toggle('active', b === btn));
+          saveVehicleId(selectedVehicle);
+          // EV is always automatic — dim the transmission row.
+          if (transRow) {
+            const off = selectedVehicle === 'ev';
+            transRow.style.opacity = off ? '0.45' : '';
+            transRow.style.pointerEvents = off ? 'none' : '';
+          }
+        }
+      }),
+    );
+
     this.root.querySelectorAll<HTMLButtonElement>('[data-track]').forEach((card) => {
       card.addEventListener('click', () => {
         saveTransmission(selectedTrans);
         saveWeatherChoice(selectedWeather);
+        saveVehicleId(selectedVehicle);
         navigate(
-          `?track=${card.dataset.track}&trans=${selectedTrans}&weather=${selectedWeather}`,
+          `?track=${card.dataset.track}&trans=${selectedTrans}&weather=${selectedWeather}&vehicle=${selectedVehicle}`,
         );
       });
     });

@@ -1,23 +1,38 @@
 import { CarConfig } from '../vehicle/CarConfig';
 
+export type SoundProfile = 'combustion' | 'electric';
+
 /**
- * Procedural engine drone driven by Web Audio. A real CC0/original engine
- * loop replaces this at M10; for M3 we just want a sound whose pitch tracks
- * RPM and that wobbles on the rev limiter, without bundling any asset.
+ * Procedural drivetrain sound. Two parallel graphs are built once on
+ * `start()`:
  *
- * Signal path: two detuned sawtooth oscillators (primary + octave) → lowpass
- * filter → master gain → destination. Frequency is the engine's firing rate
- * (rpm/30, the classic 4-stroke approximation), gain is throttle-weighted.
+ *   - **combustion**: two detuned saw/square oscillators → lowpass filter,
+ *     pitched by RPM (rpm/30 = 4-stroke firing rate). Wobbles on the rev
+ *     limiter. The original gas-car drone.
+ *   - **electric**: two detuned saws → tight bandpass filter, pitched
+ *     `220 + speedKmh * 8` Hz so the whine rises with road speed. Idle is
+ *     silent (no whine at standstill, like a real EV).
+ *
+ * Both share the wind/road-rumble layer below. `setProfile('electric')`
+ * mutes one graph's master and unmutes the other.
  *
  * The browser requires a user gesture to start audio, so call `start()` from
  * a key/click handler.
  */
 export class EngineSound {
   private ctx: AudioContext | null = null;
+  // ── Combustion graph ──────────────────────────────────────────────────
   private oscPrimary: OscillatorNode | null = null;
   private oscOctave: OscillatorNode | null = null;
   private filter: BiquadFilterNode | null = null;
   private gain: GainNode | null = null;
+  // ── Electric graph ────────────────────────────────────────────────────
+  private evOsc1: OscillatorNode | null = null;
+  private evOsc2: OscillatorNode | null = null;
+  private evFilter: BiquadFilterNode | null = null;
+  private evGain: GainNode | null = null;
+  private currentEvGain = 0;
+  private profile: SoundProfile = 'combustion';
   // Wind layer — pink-ish noise buffer through a lowpass, volume scales
   // with speed² so it's silent at idle and a clear whoosh above ~60 km/h.
   private windSource: AudioBufferSourceNode | null = null;
@@ -74,6 +89,29 @@ export class EngineSound {
     this.oscPrimary.start();
     this.oscOctave.start();
 
+    // ── Electric graph ──────────────────────────────────────────────────
+    this.evOsc1 = this.ctx.createOscillator();
+    this.evOsc1.type = 'sawtooth';
+    this.evOsc1.frequency.value = 220;
+    this.evOsc2 = this.ctx.createOscillator();
+    this.evOsc2.type = 'sawtooth';
+    this.evOsc2.frequency.value = 220 * 2.02; // detuned octave
+    const evG1 = this.ctx.createGain();
+    evG1.gain.value = 0.42;
+    const evG2 = this.ctx.createGain();
+    evG2.gain.value = 0.22;
+    this.evFilter = this.ctx.createBiquadFilter();
+    this.evFilter.type = 'bandpass';
+    this.evFilter.frequency.value = 240;
+    this.evFilter.Q.value = 3.5;
+    this.evGain = this.ctx.createGain();
+    this.evGain.gain.value = 0;
+    this.evOsc1.connect(evG1).connect(this.evFilter);
+    this.evOsc2.connect(evG2).connect(this.evFilter);
+    this.evFilter.connect(this.evGain).connect(this.ctx.destination);
+    this.evOsc1.start();
+    this.evOsc2.start();
+
     // ── Wind layer ──────────────────────────────────────────────────────
     // 2 s buffer of white noise looped. The lowpass shapes it toward a
     // wind/rumble timbre; gain follows speed (set per frame in update()).
@@ -101,6 +139,12 @@ export class EngineSound {
   toggleMute(): boolean {
     this.muted = !this.muted;
     return this.muted;
+  }
+
+  /** Switch between combustion and electric sound. The unused graph's
+   *  master gain ramps to zero so we don't hear two engines at once. */
+  setProfile(profile: SoundProfile): void {
+    this.profile = profile;
   }
 
   /** Per render frame: push current rpm/throttle into the audio graph. */
@@ -139,10 +183,30 @@ export class EngineSound {
     const cutoff = 500 + (rpm / CarConfig.redlineRpm) * 1800;
     this.filter.frequency.setTargetAtTime(cutoff, now, 0.05);
 
-    // Smooth master gain toward target (and toward 0 if muted).
-    const target = this.muted ? 0 : this.targetThrottleGain;
-    this.currentGain += (target - this.currentGain) * Math.min(1, dt * 6);
+    // Smooth master gain toward target. The INACTIVE profile's gain ramps
+    // toward zero, the ACTIVE one toward its throttle-weighted target.
+    const combustionTarget =
+      this.muted || this.profile !== 'combustion' ? 0 : this.targetThrottleGain;
+    this.currentGain += (combustionTarget - this.currentGain) * Math.min(1, dt * 6);
     this.gain.gain.setTargetAtTime(this.currentGain, now, 0.03);
+
+    // EV motor whine: pitch = 220 + speedKmh*8, gain swells with throttle
+    // but stays audible while coasting. Silent at standstill.
+    if (this.evOsc1 && this.evOsc2 && this.evFilter && this.evGain) {
+      const evHz = 220 + Math.max(0, this.currentSpeedKmh) * 8;
+      this.evOsc1.frequency.setTargetAtTime(evHz, now, 0.04);
+      this.evOsc2.frequency.setTargetAtTime(evHz * 2.02, now, 0.04);
+      this.evFilter.frequency.setTargetAtTime(evHz, now, 0.04);
+      // Throttle-weighted; speed-gated so the whine starts only once the
+      // car is moving (real EVs are silent at standstill).
+      const speedGate = Math.min(1, Math.max(0, this.currentSpeedKmh - 2) / 30);
+      const evTarget =
+        this.muted || this.profile !== 'electric'
+          ? 0
+          : (0.10 + throttle * 0.32) * speedGate;
+      this.currentEvGain += (evTarget - this.currentEvGain) * Math.min(1, dt * 5);
+      this.evGain.gain.setTargetAtTime(this.currentEvGain, now, 0.04);
+    }
 
     // Wind layer — silent at idle, audible ~60 km/h, loud past ~150 km/h.
     if (this.windGain && this.windFilter) {

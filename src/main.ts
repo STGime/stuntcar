@@ -16,6 +16,7 @@ import {
 import { Rain } from './world/Rain';
 import { Snow } from './world/Snow';
 import { Car } from './vehicle/Car';
+import { VEHICLES, loadVehicleId, type VehicleId } from './vehicle/VehicleConfigs';
 import { CameraRig } from './camera/CameraRig';
 import { Hud } from './ui/Hud';
 import { EngineSound } from './audio/EngineSound';
@@ -71,6 +72,11 @@ async function main(): Promise<void> {
   const trackIdx = Math.max(1, Math.min(TRACKS.length, parseInt(trackParam, 10) || 1)) - 1;
   const trackDef = trackByDevIndex(trackIdx);
   const transmission = params.get('trans') === 'manual' ? 'manual' : loadTransmission();
+  const vehicleParam = params.get('vehicle') as VehicleId | null;
+  const vehicleId: VehicleId =
+    vehicleParam && vehicleParam in VEHICLES ? vehicleParam : loadVehicleId();
+  const vehicle = VEHICLES[vehicleId];
+
   const weatherParam = params.get('weather') as WeatherChoice | null;
   const validParam = weatherParam === 'random' || (weatherParam && weatherParam in WEATHER_PRESETS);
   const weatherChoice: WeatherChoice = validParam ? (weatherParam as WeatherChoice) : loadWeatherChoice();
@@ -117,7 +123,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const car = new Car(engine.scene, physics.world);
+  const car = new Car(engine.scene, physics.world, vehicle);
   car.drivetrain.setMode(transmission);
   car.setHeadlights(weather.id === 'night');
   if (weather.slipFactor !== undefined) car.setGripFactor(weather.slipFactor);
@@ -156,6 +162,7 @@ async function main(): Promise<void> {
   );
 
   const engineSound = new EngineSound();
+  engineSound.setProfile(vehicle.drivetrain);
   if (settings.audioMuted) engineSound.setMuted(true);
   const sfx = new Sfx();
   if (settings.audioMuted) sfx.setMuted(true);
@@ -413,6 +420,8 @@ async function main(): Promise<void> {
           gear: frame.gear,
           mode: car.drivetrain.mode === 'automatic' ? 'A' : 'M',
           onLimiter: false,
+          electric: vehicle.drivetrain === 'electric',
+          powerT: car.drivetrain.powerT,
         });
         hud.updateRace({
           ...race.snapshot(),
@@ -459,6 +468,8 @@ async function main(): Promise<void> {
         gear: dt.gearLabel(),
         mode: dt.mode === 'automatic' ? 'A' : 'M',
         onLimiter: dt.onLimiter,
+        electric: vehicle.drivetrain === 'electric',
+        powerT: dt.powerT,
       });
       hud.updateRace({
         ...race.snapshot(),
