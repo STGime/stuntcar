@@ -32,6 +32,8 @@ import { ReplayCamera } from './replay/ReplayCamera';
 import { Menus, loadTransmission } from './ui/Menus';
 import { MiniMap } from './ui/MiniMap';
 import { loadSettings } from './ui/Settings';
+import { OrientationPrompt, isTouchDevice } from './ui/OrientationPrompt';
+import { TouchControls } from './ui/TouchControls';
 import { SkidEffects } from './fx/SkidEffects';
 import { BonusFloaters } from './fx/BonusFloaters';
 
@@ -61,6 +63,14 @@ async function main(): Promise<void> {
   const params = new URLSearchParams(location.search);
   const screen = params.get('screen');
   const trackParam = params.get('track');
+
+  // On every screen, touch devices get the orientation overlay AND lose
+  // the keyboard-shortcut hint box (none of those bindings apply).
+  if (isTouchDevice()) {
+    new OrientationPrompt(document.body);
+    const hints = document.getElementById('overlay');
+    if (hints) hints.style.display = 'none';
+  }
 
   // Screen routing: no ?track param → show menu/track-select screen.
   if (!trackParam) {
@@ -282,6 +292,43 @@ async function main(): Promise<void> {
   input.onPress('Digit2', () => gotoTrack(2));
   input.onPress('Digit3', () => gotoTrack(3));
   input.onPress('Digit4', () => gotoTrack(4));
+
+  // --- Touch controls (mobile / tablet) -----------------------------------
+  if (isTouchDevice()) {
+    // No keyboard means no manual shifting — force automatic regardless of
+    // the player's saved preference.
+    car.drivetrain.setMode('automatic');
+
+    new TouchControls(document.body, input, {
+      onToggleCamera: () => {
+        if (replayPlayer.active) return;
+        camera.toggleView();
+        car.setCockpitView(camera.isCockpit);
+      },
+      onReset: () => {
+        if (replayPlayer.active) return;
+        if (race.state === 'racing') race.resetToLastCheckpoint();
+        else if (race.state === 'finished' || race.state === 'timeup') gotoRetry();
+      },
+    });
+
+    // First user tap → request fullscreen + landscape lock. Both fail
+    // silently on browsers that don't support them.
+    const tryLockOrientation = (): void => {
+      const docEl = document.documentElement as HTMLElement & {
+        requestFullscreen?: () => Promise<void>;
+      };
+      const screenOri = (screen as unknown as {
+        orientation?: { lock?: (o: string) => Promise<void> };
+      }).orientation;
+      docEl
+        .requestFullscreen?.()
+        .then(() => screenOri?.lock?.('landscape'))
+        .catch(() => undefined);
+      window.removeEventListener('pointerdown', tryLockOrientation);
+    };
+    window.addEventListener('pointerdown', tryLockOrientation);
+  }
 
   const currentThrottle = (): number => {
     const accel = input.isDown('ArrowUp', 'KeyW');

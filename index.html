@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>STUNTLINE</title>
     <style>
@@ -13,9 +13,17 @@
         overflow: hidden;
         background: #1a2030;
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        /* Touch-device hygiene: no scroll, no rubber-banding, no text
+           selection, no double-tap zoom. The game's touch handlers manage
+           all pointer state themselves. */
+        touch-action: none;
+        overscroll-behavior: contain;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent;
       }
       #app { position: fixed; inset: 0; }
-      canvas { display: block; }
+      canvas { display: block; touch-action: none; }
 
       #overlay {
         position: fixed;

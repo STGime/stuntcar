@@ -477,9 +477,9 @@ export class Car {
       linvel.x * this.tmpVec.x + linvel.y * this.tmpVec.y + linvel.z * this.tmpVec.z;
 
     // --- Steering (speed-sensitive) -----------------------------------------
-    const steerInput =
-      (input.isDown('ArrowLeft', 'KeyA') ? 1 : 0) -
-      (input.isDown('ArrowRight', 'KeyD') ? 1 : 0);
+    // `steerAxis()` returns the touch-joystick value if active, otherwise
+    // the A/D / ←→ digital input. Already clamped to [-1, +1].
+    const steerInput = input.steerAxis();
 
     const speedT = Math.min(this.speedKmh / c.highSpeedKmh, 1);
     const steerLimit =
