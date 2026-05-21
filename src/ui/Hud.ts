@@ -1355,6 +1355,15 @@ function injectStyles(): void {
         bottom: 0;
       }
       #race-bar { transform: translateX(-50%) scale(0.8); transform-origin: top center; }
+      /* Float effect chips on the timer's row instead of below it,
+         so they don't eat the centre of the view. */
+      #effect-chips {
+        top: 18px;
+        left: 110px;
+        right: auto;
+        transform: scale(0.85);
+        transform-origin: top left;
+      }
     }
   `;
   const style = document.createElement('style');

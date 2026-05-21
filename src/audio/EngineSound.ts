@@ -59,6 +59,9 @@ export class EngineSound {
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
     this.ctx = new Ctx();
+    // Firefox and mobile Chrome create new contexts in 'suspended' state;
+    // without an explicit resume() the oscillators never produce sound.
+    this.ctx.resume();
 
     this.oscPrimary = this.ctx.createOscillator();
     this.oscPrimary.type = 'sawtooth';
