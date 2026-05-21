@@ -10,26 +10,6 @@
  * `EngineSound` resumes the context for Sfx too.
  */
 
-/** iOS Safari/Chrome quirk: a new AudioContext is "unlocked" only after
- *  a buffer-source carrying ACTUAL signal has been played from inside a
- *  user gesture. An all-zero buffer unlocks one-shots but does not
- *  reliably commit the context to the media-output path, so continuous
- *  long-running oscillators (the engine drone) stay silent. Filling the
- *  one-sample buffer with a non-zero value yields a ~22 µs spike that's
- *  inaudible to humans but visible to the audio renderer. */
-export function iosUnlock(ctx: AudioContext): void {
-  try {
-    const buf = ctx.createBuffer(1, 1, 22050);
-    buf.getChannelData(0)[0] = 1;
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start(0);
-  } catch {
-    /* nothing we can do */
-  }
-}
-
 export class Sfx {
   private ctx: AudioContext | null = null;
   // Sustained tire-screech graph (built once on `start`).
@@ -48,7 +28,6 @@ export class Sfx {
       this.masterGain.gain.value = this.muted ? 0 : 1;
       this.masterGain.connect(this.ctx.destination);
       this.buildScreech();
-      iosUnlock(this.ctx);
     }
     // Always try to resume — modern browsers create contexts in 'suspended'
     // state when not under an interactive gesture chain.
@@ -103,7 +82,7 @@ export class Sfx {
     oscGain.gain.value = 0.45;
 
     const master = this.ctx.createGain();
-    master.gain.value = 0.0001;
+    master.gain.value = 0;
 
     noise.connect(noiseBp).connect(noiseGain).connect(master);
     osc.connect(oscBp).connect(oscGain).connect(master);

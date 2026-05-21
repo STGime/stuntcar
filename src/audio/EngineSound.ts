@@ -1,5 +1,4 @@
 import { CarConfig } from '../vehicle/CarConfig';
-import { iosUnlock } from './Sfx';
 
 export type SoundProfile = 'combustion' | 'electric';
 
@@ -63,9 +62,6 @@ export class EngineSound {
     // Firefox and mobile Chrome create new contexts in 'suspended' state;
     // without an explicit resume() the oscillators never produce sound.
     this.ctx.resume();
-    // iOS Safari/Chrome also need a buffer-source played from inside the
-    // gesture before they'll actually output sound.
-    iosUnlock(this.ctx);
 
     this.oscPrimary = this.ctx.createOscillator();
     this.oscPrimary.type = 'sawtooth';
@@ -87,10 +83,7 @@ export class EngineSound {
     primaryGain.gain.value = 0.5;
 
     this.gain = this.ctx.createGain();
-    // iOS WebKit suspends continuous audio paths whose output is exactly
-    // zero, and setTargetAtTime later never wakes them up. Start at a
-    // sub-audible non-zero value so the renderer keeps the path live.
-    this.gain.gain.value = 0.0001;
+    this.gain.gain.value = 0.0;
 
     this.oscPrimary.connect(primaryGain).connect(this.filter);
     this.oscOctave.connect(octaveGain).connect(this.filter);
@@ -115,7 +108,7 @@ export class EngineSound {
     this.evFilter.frequency.value = 240;
     this.evFilter.Q.value = 3.5;
     this.evGain = this.ctx.createGain();
-    this.evGain.gain.value = 0.0001;
+    this.evGain.gain.value = 0;
     this.evOsc1.connect(evG1).connect(this.evFilter);
     this.evOsc2.connect(evG2).connect(this.evFilter);
     this.evFilter.connect(this.evGain).connect(this.ctx.destination);
@@ -137,7 +130,7 @@ export class EngineSound {
     this.windFilter.frequency.value = 380;
     this.windFilter.Q.value = 0.4;
     this.windGain = this.ctx.createGain();
-    this.windGain.gain.value = 0.0001;
+    this.windGain.gain.value = 0;
     this.windSource.connect(this.windFilter).connect(this.windGain).connect(this.ctx.destination);
     this.windSource.start();
   }
