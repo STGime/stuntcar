@@ -1,23 +1,31 @@
 // AudioWorklet processor that synthesises the engine drone entirely
 // in the audio thread. Runs in AudioWorkletGlobalScope — no imports,
-// no DOM, no `window`. The whole point is that it emits non-zero
-// samples *every* render block, which keeps iOS WebKit's renderer
-// engaged even at idle (the bug the old OscillatorNode-based graph
-// hit: a master gain of 0 at gesture time made iOS suspend the
-// path, and later setTargetAtTime calls never woke it back up).
+// no DOM, no `window`.
+//
+// Why this exists: the OscillatorNode-based graph stays silent on iOS
+// Safari/Chrome — its master gain starts at 0 and iOS's renderer
+// appears to park audio paths that haven't emitted non-zero samples.
+// `process()` here runs every render block regardless, AND we add a
+// permanent low-amplitude noise floor below so the output is never
+// exactly zero even when every gain is 0 (mute, or EV at standstill).
 //
 // Signal graph (all in one processor):
 //
 //   combustion saw  ─┐
-//   combustion sqr  ─┴─► one-pole LP (Q≈1.2) ─► × combGain ─┐
-//   EV saw 1        ─┐                                     │
-//   EV saw 2        ─┴─► biquad BP   (Q≈3.5) ─► × evGain  ─┼─► out
-//   white noise      ─► one-pole LP (Q≈0.4) ─► × windGain ─┘
+//   combustion sqr  ─┴─► biquad LP (Q≈1.2) ─► × combGain ─┐
+//   EV saw 1        ─┐                                    │
+//   EV saw 2        ─┴─► biquad BP (Q≈3.5) ─► × evGain   ─┼─► + ε noise ─► tanh ─► out
+//   white noise      ─► biquad LP (Q≈0.4) ─► × windGain  ─┘
 //
-// All parameters are k-rate: smoothing is done on the main side
-// via setTargetAtTime so values change once per 128-sample block,
-// which is plenty for the per-frame update() cadence and keeps the
-// worklet's inner loop cheap.
+// All eight params are k-rate: smoothing is done on the main side via
+// setTargetAtTime so values change once per 128-sample block, which is
+// plenty for the per-frame update() cadence and keeps the worklet's
+// inner loop cheap.
+
+// Noise-floor amplitude. -100 dB (1e-5) — well below audibility,
+// well above any plausible "is this silence" threshold the audio
+// renderer might apply when deciding whether to park the path.
+const NOISE_FLOOR = 1e-5;
 
 class EngineProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
@@ -141,7 +149,16 @@ class EngineProcessor extends AudioWorkletProcessor {
       this.wz1 = wLP.b1 * noise - wLP.a1 * wOut + this.wz2;
       this.wz2 = wLP.b2 * noise - wLP.a2 * wOut;
 
-      out[i] = cOut * combGain + eOut * evGain + wOut * windGain;
+      // Mix, add inaudible noise floor (ensures non-zero output even when
+      // every gain is 0 — covers mute, and EV-at-standstill), and soft-clip
+      // through tanh so peak sums (combGain≤0.73 + evGain≤0.42 + windGain≤0.32
+      // ≈ 1.47) compress gracefully instead of hard-clipping at destination.
+      const mix =
+        cOut * combGain +
+        eOut * evGain +
+        wOut * windGain +
+        (Math.random() * 2 - 1) * NOISE_FLOOR;
+      out[i] = Math.tanh(mix);
     }
     return true;
   }

@@ -1,4 +1,9 @@
 import { CarConfig } from '../vehicle/CarConfig';
+// Vite handles `?url` on a .js asset: it copies the file to the output
+// directory (hashed) and gives us the resolved URL string here. This
+// is what AudioWorklet.addModule needs, and crucially it is base-aware
+// — no breakage if we ever deploy under a sub-path.
+import engineProcessorUrl from './engine-processor.js?url';
 
 export type SoundProfile = 'combustion' | 'electric';
 
@@ -29,7 +34,8 @@ export class EngineSound {
   private ctx: AudioContext | null = null;
 
   // ── Worklet path ──────────────────────────────────────────────────────
-  private worklet: AudioWorkletNode | null = null;
+  // The AudioWorkletNode itself is kept alive by its connection to
+  // `ctx.destination`, so we only need the params bag here.
   private workletParams: {
     combGain: AudioParam;
     evGain: AudioParam;
@@ -92,12 +98,14 @@ export class EngineSound {
 
   private async tryStartWorklet(): Promise<void> {
     if (!this.ctx?.audioWorklet) throw new Error('AudioWorklet not supported');
-    await this.ctx.audioWorklet.addModule('/engine-processor.js');
-    if (!this.ctx) return; // disposed during await
-    const node = new AudioWorkletNode(this.ctx, 'engine-processor');
-    const p = node.parameters as Map<string, AudioParam>;
+    await this.ctx.audioWorklet.addModule(engineProcessorUrl);
+    const node = new AudioWorkletNode(this.ctx, 'engine-processor', {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
     const need = (name: string): AudioParam => {
-      const ap = p.get(name);
+      const ap = node.parameters.get(name);
       if (!ap) throw new Error(`Missing worklet param ${name}`);
       return ap;
     };
@@ -112,7 +120,6 @@ export class EngineSound {
       windCutoff: need('windCutoff'),
     };
     node.connect(this.ctx.destination);
-    this.worklet = node;
   }
 
   private startOscillators(): void {
