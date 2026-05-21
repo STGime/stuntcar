@@ -122,6 +122,36 @@ export class Sfx {
     this.tone(1320, 0.18, 0.14, now + 0.04);
   }
 
+  /** Quick ascending arpeggio — collected a pickup. */
+  pickup(): void {
+    const now = this.ctx?.currentTime ?? 0;
+    this.tone(880, 0.10, 0.18, now);
+    this.tone(1175, 0.10, 0.18, now + 0.05);
+    this.tone(1568, 0.14, 0.22, now + 0.10);
+  }
+
+  /** Bandpass noise burst — drove over a hazard. */
+  hazard(): void {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const buffer = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.3, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 380;
+    bp.Q.value = 1.4;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.32, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    noise.connect(bp).connect(g).connect(this.output());
+    noise.start(now);
+    noise.stop(now + 0.32);
+  }
+
   /** Brief downward sweep — used on a wreck. */
   crashThud(): void {
     if (!this.ctx) return;

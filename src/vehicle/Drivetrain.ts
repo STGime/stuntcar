@@ -47,6 +47,14 @@ export class Drivetrain {
    *  Used by the EV HUD's power bar. Always 0 for combustion. */
   powerT = 0;
 
+  // ── Powerup modifiers (default = no-op) ───────────────────────────────
+  /** Multiplier applied to engineForce after the drivetrain computes it.
+   *  Turbo pickup sets this above 1; mud hazard pushes it down. */
+  boostFactor = 1;
+  /** Hard speed cap in km/h. Above this the drivetrain refuses to add
+   *  positive engine force. `Infinity` = no cap. */
+  speedCapKmh = Infinity;
+
   private shiftCooldown = 0;
   private readonly profile: VehicleProfile;
 
@@ -114,6 +122,19 @@ export class Drivetrain {
       this.updateElectric(dt, input);
     } else {
       this.updateCombustion(dt, input);
+    }
+    // Powerup post-processing: turbo (boost), mud (cap + drag), oil (also
+    // sometimes set boost <1).
+    const speedKmh = Math.abs(input.forwardVel) * 3.6;
+    if (this.engineForce > 0) {
+      if (speedKmh >= this.speedCapKmh) {
+        this.engineForce = 0;
+      } else {
+        this.engineForce *= this.boostFactor;
+      }
+    } else {
+      // Boost factor still applies to reverse force; speed cap doesn't.
+      this.engineForce *= this.boostFactor;
     }
   }
 
@@ -184,17 +205,13 @@ export class Drivetrain {
     const ratio = p.evFixedRatio ?? 9;
     const regenK = p.evRegenFactor ?? 14;
     const featherKmh = p.evRegenFeatherKmh ?? 5;
-    const autoReverseKmh = p.autoReverseThresholdKmh ?? 2;
 
-    // Direction selection (D / R). Pressing brake at near-zero speed flips
-    // to reverse; throttle at near-zero in reverse flips back to D. This
-    // mirrors the combustion automatic behaviour.
-    const stopped = speedKmh < autoReverseKmh;
-    if (input.brake && stopped && this.gear !== REVERSE && input.throttle === 0) {
-      this.gear = REVERSE;
-    } else if (input.throttle > 0 && stopped && this.gear === REVERSE) {
-      this.gear = FIRST;
-    }
+    // Gear (D ↔ R) is managed entirely by the Car layer's automatic
+    // brake-at-standstill / throttle-at-standstill flip. We INTENTIONALLY
+    // do NOT auto-switch here — if we did, the Car layer would force
+    // gear=R while we're inside this update, then we'd immediately flip
+    // it back to D and apply forward force, so the car would creep
+    // forward instead of reversing.
 
     // Continuous torque curve: flat T below knee, then constant-power above.
     // Convert peak torque to wheel force (T * ratio / radius).

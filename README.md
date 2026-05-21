@@ -37,16 +37,19 @@ Requirements: **Node 18+** (developed on Node 22).
 
 ## How to play
 
-Land on the page → **Main Menu** → **Start** → **Track Select** (3 tracks
-+ Automatic/Manual transmission toggle + Weather selector) → 3-2-1-GO
-**countdown** → **Racing**. Reach each checkpoint in order before the
-timer hits zero; each gate adds time. Each race is **3 laps**; crossing
-the finish line on the final lap records your total time. Beat the
-leaderboard's worst time and you enter a 3-letter arcade name; the
-per-track top 10 is persisted in `localStorage`. A `← MENU` button
-sits in the top-left during a race to quit back to the main menu.
+Land on the page → **Main Menu** → **Start** → **Track Select** (4 tracks
++ Vehicle, Transmission and Weather selectors) → 3-2-1-GO **countdown** →
+**Racing**. Reach each checkpoint in order before the timer hits zero;
+each gate adds time. Each race is **3 laps**; crossing the finish line
+on the final lap records your total time. Beat the leaderboard's worst
+time and you enter a 3-letter arcade name; the per-track top 10 is
+persisted in `localStorage`. A `← MENU` button sits in the top-left
+during a race to quit back to the main menu.
 
-### Controls
+Pickups and hazards spawn along the racing line and respawn every lap —
+grab a turbo / sticky-tires / +5s / shield, or eat oil / mud / smoke.
+
+### Controls (keyboard)
 
 | Action | Keys |
 |---|---|
@@ -60,10 +63,28 @@ sits in the top-left during a race to quit back to the main menu.
 | Toggle Automatic ↔ Manual | `T` |
 | Mute engine | `M` |
 | Back to Track Select / Menu | `Esc` |
-| Switch tracks during a run | `1` `2` `3` |
+| Switch tracks during a run | `1` `2` `3` `4` |
+
+### Controls (touch / mobile)
+
+Landscape orientation only — a rotate-your-device overlay appears in
+portrait. Left half of the screen is an always-visible analog steering
+pad (drag horizontally to steer); the bottom-right has two big GAS / BRAKE
+pedals with the same combustion auto-engage-reverse and EV regen-on-brake
+behaviours as desktop. Two small CAM / RST chips replace `C` and `R`.
+Automatic transmission is forced (no manual shift on mobile).
 
 ### What you'll see
 
+- **Vehicles** (selected on Track Select):
+  - **ICE** — combustion car: 1100 kg, RPM tach, gear letter, automatic
+    or manual transmission, gas-engine drone.
+  - **EV** — electric: 1500 kg, Tesla-feel single-speed (peak 500 N·m
+    flat to 60 km/h then 280 kW constant power up to 240 km/h), strong
+    regen (28 N/km/h coast, 98 N/km/h while braking) that feathers out
+    below 5 km/h. Always automatic. HUD swaps the tach for a `POWER`
+    bar (green drive / red regen); engine drone becomes a rising motor
+    whine. Teal paint, "EV" door roundel.
 - **Cockpit dashboard**: analogue rev counter + speedometer (SVG), gear
   letter, transmission mode, `LIMIT` warning at the redline, plus a
   steering wheel that turns with input (cockpit view only).
@@ -104,6 +125,16 @@ sits in the top-left during a race to quit back to the main menu.
   - **Random** — picks a fresh preset each load.
 - **Easter egg on Track 1**: a small cottage inside the closed loop
   with a blinking neon sign on its roof.
+- **Powerups & hazards** (one per ~70 m of ribbon, seeded per session,
+  respawn every lap):
+  - Floating cards above the road — `» TURBO` (engine ×1.8, 2 s),
+    `◯ GRIP` (tire friction ×1.6, 5 s), `+5s` (instant timer bonus),
+    `◆ SHIELD` (absorbs the next hazard).
+  - Painted decals on the road — `OIL` (friction ×0.35, 1.5 s), `MUD`
+    (engine ×0.5, 70 km/h cap, 2.5 s), `SMOKE` (fullscreen vignette,
+    3 s).
+  - One timed effect at a time; new pickup/hazard replaces the
+    current one. Shield is a separate passive slot.
 
 ---
 
@@ -114,6 +145,7 @@ sits in the top-left during a race to quit back to the main menu.
 | 1 | Skyline Run | easy | Closed loop. 4 straights + 4 corners; symmetric hill on each side straight; jump + valley on the back straight. |
 | 2 | Loopback | medium | Closed loop. Jump + valley, forward-helix loop, narrow section. |
 | 3 | The Gauntlet | hard | Closed loop. Two jumps with valleys, narrow + banked S-curve, forward-helix loop. |
+| 4 | Crosstown | hard | Closed loop, ~960 m. City circuit — 4 banked corners, two chicanes, jump + valley, tunnel section with overhead ceiling lights. Asphalt ribbon on concrete piers, building-lined skyline. |
 
 Each track is a closed circuit: cross the start line, drive a lap, cross
 the finish line (= start line). Each race is **3 laps**. Per-track
@@ -146,13 +178,16 @@ src/
   vehicle/
     Car.ts                   chassis + DynamicRayCastVehicleController + visuals
                              (incl. steering wheel that rotates with input)
-    CarConfig.ts             tunable constants (mass, torque, suspension, gears…)
-    Drivetrain.ts            RPM model, torque curve, manual/automatic transmission
+    CarConfig.ts             SHARED chassis/wheels/steering constants
+    VehicleConfigs.ts        per-vehicle profiles (ICE + EV) + load/save id
+    Drivetrain.ts            combustion (RPM + gears) or electric (single-speed
+                             + regen) — branched by profile.drivetrain
   track/
     TrackTypes.ts            Segment / Checkpoint / TrackDef
     TrackBuilder.ts          walks the segment list → ribbon + skirts + curbs
                              + centre stripe + Rapier trimesh + centerline samples
-    tracks/                  track01_easy.ts, track02_medium.ts, track03_hard.ts
+    tracks/                  track01_easy.ts, track02_medium.ts,
+                             track03_hard.ts, track04_city.ts
   race/
     Race.ts                  state machine + 3-lap wrap (countdown / racing / timeup / finished)
     RaceTimer.ts             countdown + per-gate bonus + lap bonus
@@ -160,6 +195,7 @@ src/
     CrashSystem.ts           kill-plane + tipped-stuck triggers, fires onCrash
     OffTrackDetector.ts      5 s grace countdown when wheels leave the ribbon
     Leaderboard.ts           per-track top-10 (name + time) in localStorage
+    Powerups.ts              pickup + hazard scatter, collision, effect timer
   replay/
     ReplayRecorder.ts        12 s ring buffer (per fixed step)
     ReplayPlayer.ts          real-time playback with onComplete callback
@@ -174,8 +210,13 @@ src/
     Sfx.ts                   procedural one-shots: beep / chime / thud
   ui/
     Hud.ts                   SVG dashboard + race bar + result modal + name entry + quit btn
-    Menus.ts                 Main Menu + Track Select (transmission + weather + leaderboard)
+                             + EV power bar + powerup effect chips
+    Menus.ts                 Main Menu + Track Select (vehicle + transmission +
+                             weather + leaderboard)
     MiniMap.ts               Top-right SVG mini-map of the track centerline
+    Settings.ts              Settings modal (FOV, camera roll/shake, mute, etc.)
+    OrientationPrompt.ts     Mobile "rotate your device" overlay
+    TouchControls.ts         Touch steering pad + GAS/BRAKE pedals + CAM/RST chips
 ```
 
 ### Notable design decisions
@@ -312,6 +353,58 @@ Post-MVP additions:
   closed loop with a blinking neon sign on its roof.
 - **Favicon + tab title** — `STUNTLINE` only, with a custom SVG icon
   matching the brand palette.
+
+### Track 4 + city theme
+
+- **Crosstown** — a 4th hard track, a ~960 m closed-loop city circuit.
+  Rectangle with banked corners, two mirrored chicanes, a jump + valley
+  and a tunnel section. Closure smoothed by a 30 m smoothstep blend on
+  the closedLoop seam so the finish line is flush.
+- `theme: 'city'` on a TrackDef switches the renderer to asphalt
+  ribbon + concrete piers (instead of dirt skirts) + tunnel walls +
+  ceiling colliders + tunnel ceiling lights. Mountain ridge is
+  replaced by a distant building silhouette ring.
+
+### EV vehicle variant
+
+- A second selectable car alongside ICE on Track Select. Heavier
+  (1500 kg), single-speed, Tesla-style flat torque up to 60 km/h then
+  constant power up to 240 km/h. Strong regen on lift-off, even
+  stronger when the brake key is held; feathers out below 5 km/h.
+- HUD swaps the RPM tach for a `POWER` bar (green drive / red regen).
+  Gear label shows `D`/`R`; mode label shows `EV`. Combustion drone
+  becomes a rising motor whine that's silent at standstill.
+- Per-vehicle profiles live in `VehicleConfigs.ts`; `Car` and
+  `Drivetrain` take a profile in their constructors.
+
+### Powerups (arcade pickups + hazards)
+
+- Spawn roughly one per 70 m of ribbon, seeded by `(trackId,
+  currentMinute)` so each session has its own layout. ⅔ pickups, ⅓
+  hazards. Per-lap respawn.
+- Pickups: TURBO (engine ×1.8 / 2 s), GRIP (friction ×1.6 / 5 s),
+  +5s (instant timer bonus), SHIELD (absorbs the next hazard).
+- Hazards: OIL (friction ×0.35 / 1.5 s), MUD (engine ×0.5, 70 km/h
+  cap / 2.5 s), SMOKE (fullscreen vignette / 3 s).
+- One timed effect at a time. Shield is a separate passive slot.
+- HUD active-effect chip with a draining progress bar.
+
+### Mobile / touch support
+
+- Landscape-only. A full-screen "rotate your device" overlay nags
+  the player in portrait.
+- Left half of the screen is an always-visible analog steering pad
+  (drag from anywhere on the left). Bottom-right hosts two big GAS /
+  BRAKE pedals + small CAM / RST chips.
+- Auto fullscreen + orientation-lock attempt on first tap.
+- Touch input flows through `Input.setAnalogSteer` + `virtualPress`,
+  so `Car.update` reads the same `steerAxis()` whether the player is
+  using a keyboard, a steering pad, or both.
+- Multiple redundant pedal-release paths (document/window
+  `pointerup`/`pointercancel` in capture phase, `mouseup`/`touchend`
+  fallbacks, window blur, plus a 250 ms `hasPointerCapture` watchdog)
+  so Chrome desktop emulation and iOS Safari don't ever leave a key
+  stuck.
 
 ---
 

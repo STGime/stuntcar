@@ -49,6 +49,13 @@ interface HudState {
   powerT?: number;
 }
 
+export interface HudActiveEffect {
+  label: string;
+  remainingSec: number;
+  totalSec: number;
+  color: string;
+}
+
 export interface HudRaceState {
   state: 'countdown' | 'racing' | 'timeup' | 'finished';
   remainingSec: number;
@@ -66,6 +73,10 @@ export interface HudRaceState {
   offTrackSecondsLeft: number;
   /** Track id — used to look up the leaderboard on the result screen. */
   trackId: string;
+  /** Currently-active timed powerup effect, or null. */
+  activeEffect?: HudActiveEffect | null;
+  /** Is the shield held? */
+  shield?: boolean;
 }
 
 export interface HudCallbacks {
@@ -100,6 +111,7 @@ export class Hud {
   private readonly offTrackEl: HTMLElement;
   private readonly lapBannerEl: HTMLElement;
   private readonly quitBtn: HTMLButtonElement;
+  private readonly effectChips: HTMLElement;
   // EV power bar (only shown when the active vehicle is electric).
   private readonly powerBar: HTMLElement;
   private readonly powerFillPositive: HTMLElement;
@@ -293,6 +305,11 @@ export class Hud {
     this.quitBtn.style.pointerEvents = 'auto';
     container.appendChild(this.quitBtn);
 
+    // Powerup effect chips (top centre, just under the race bar).
+    this.effectChips = document.createElement('div');
+    this.effectChips.id = 'effect-chips';
+    container.appendChild(this.effectChips);
+
     const gauges = document.createElement('div');
     gauges.className = 'hud-gauges';
     this.root.appendChild(gauges);
@@ -393,6 +410,9 @@ export class Hud {
 
   updateRace(r: HudRaceState): void {
     this.currentTrackId = r.trackId;
+
+    // Powerup chips: at most one timed effect + optional shield.
+    this.renderEffectChips(r.activeEffect ?? null, !!r.shield);
 
     this.timerEl.textContent = formatTime(r.remainingSec);
     this.timerEl.classList.toggle('warn', r.remainingSec < 5 && r.state === 'racing');
@@ -542,6 +562,29 @@ export class Hud {
       this.modalNameRow.style.display = 'none';
       this.modalNameInput.value = '';
     }
+  }
+
+  private renderEffectChips(active: HudActiveEffect | null, shield: boolean): void {
+    const parts: string[] = [];
+    if (active) {
+      const frac = Math.max(0, Math.min(1, active.remainingSec / active.totalSec));
+      parts.push(
+        `<div class="fx-chip" style="border-color:${active.color};color:${active.color}">
+           <span class="fx-chip-label">${active.label}</span>
+           <span class="fx-chip-time">${active.remainingSec.toFixed(1)}s</span>
+           <span class="fx-chip-bar" style="background:${active.color};width:${(frac * 100).toFixed(1)}%"></span>
+         </div>`,
+      );
+    }
+    if (shield) {
+      parts.push(
+        `<div class="fx-chip" style="border-color:#a98aff;color:#a98aff">
+           <span class="fx-chip-label">◆ SHIELD</span>
+         </div>`,
+      );
+    }
+    const html = parts.join('');
+    if (this.effectChips.innerHTML !== html) this.effectChips.innerHTML = html;
   }
 
   private flashLapBanner(currentLap: number, totalLaps: number): void {
@@ -1172,6 +1215,42 @@ function injectStyles(): void {
       color: #ffd166;
       border-color: #ffd166;
       background: rgba(255, 209, 102, 0.10);
+    }
+
+    #effect-chips {
+      position: fixed;
+      top: 78px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+      user-select: none;
+      z-index: 13;
+    }
+    .fx-chip {
+      position: relative;
+      padding: 6px 12px 8px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      background: rgba(12, 16, 24, 0.86);
+      border: 1px solid #4fd1c5;
+      border-radius: 8px;
+      min-width: 92px;
+      text-align: center;
+      overflow: hidden;
+    }
+    .fx-chip-label { display: inline-block; margin-right: 4px; }
+    .fx-chip-time { font-weight: 800; color: #e8edf6; }
+    .fx-chip-bar {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      height: 2px;
+      transition: width 0.05s linear;
+      opacity: 0.85;
     }
 
     #lap-banner {

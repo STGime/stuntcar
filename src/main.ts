@@ -36,6 +36,7 @@ import { OrientationPrompt, isTouchDevice } from './ui/OrientationPrompt';
 import { TouchControls } from './ui/TouchControls';
 import { SkidEffects } from './fx/SkidEffects';
 import { BonusFloaters } from './fx/BonusFloaters';
+import { Powerups, type PowerupKind } from './race/Powerups';
 
 const FIXED_DT = 1 / 60;
 const CRASH_REPLAY_SEC = 3.0;
@@ -184,9 +185,52 @@ async function main(): Promise<void> {
     if (phase === 'GO') sfx.longBeep();
     else if (phase !== null) sfx.shortBeep();
   };
-  race.onLapComplete = () => sfx.longBeep();
+  const powerups = new Powerups(
+    engine.scene,
+    track.centerline,
+    trackDef.id,
+    car,
+    race,
+    sfx,
+    bonusFloaters,
+  );
+
+  race.onLapComplete = () => {
+    sfx.longBeep();
+    powerups.resetForLap();
+  };
   race.onCheckpoint = (bonusSec, pos) => bonusFloaters.spawn(pos, bonusSec);
   race.start();
+
+  /** Translate Powerups internal state into the HudActiveEffect shape. */
+  const makeActiveEffectForHud = (p: Powerups) => {
+    const a = p.getActive();
+    if (!a) return null;
+    const labels: Record<PowerupKind, string> = {
+      turbo: '» TURBO',
+      stickyTires: '◯ GRIP',
+      timeBonus: '',
+      shield: '',
+      oilSlick: '☣ OIL',
+      mud: '※ MUD',
+      smoke: '≋ SMOKE',
+    };
+    const colors: Record<PowerupKind, string> = {
+      turbo: '#ff8a3a',
+      stickyTires: '#4fd1c5',
+      timeBonus: '#4fff8a',
+      shield: '#a98aff',
+      oilSlick: '#7a8088',
+      mud: '#b27a3a',
+      smoke: '#c8c8d0',
+    };
+    return {
+      label: labels[a.kind],
+      remainingSec: a.remainingSec,
+      totalSec: a.totalSec,
+      color: colors[a.kind],
+    };
+  };
 
   // --- Replay plumbing -----------------------------------------------------
   const recorder = new ReplayRecorder(12, FIXED_DT);
@@ -365,6 +409,13 @@ async function main(): Promise<void> {
       race.update(dt);
       crashSystem.update(dt);
       offTrack.update(dt);
+      // Powerups: collisions + active-effect tick. Paused during wreck or
+      // replay so the player doesn't fly through pickups they can't see.
+      powerups.update(
+        dt,
+        car.chassisBody,
+        race.state !== 'racing' || crashSystem.state !== 'normal',
+      );
 
       // Tire skid marks + smoke + off-road dust. Per wheel:
       //   - on-track + slipping (lateral or hard brake)  → skid mark + grey smoke
@@ -475,6 +526,8 @@ async function main(): Promise<void> {
           wrecked: false,
           offTrackSecondsLeft: 0,
           trackId: trackDef.id,
+          activeEffect: makeActiveEffectForHud(powerups),
+          shield: powerups.hasShield(),
         });
         engineSound.update(frameDt, frame.rpm, frame.throttle, false, frame.speedKmh);
         return;
@@ -523,6 +576,8 @@ async function main(): Promise<void> {
         wrecked: crashSystem.state === 'wrecking',
         offTrackSecondsLeft: offTrack.secondsLeft(),
         trackId: trackDef.id,
+        activeEffect: makeActiveEffectForHud(powerups),
+        shield: powerups.hasShield(),
       });
       engineSound.update(frameDt, dt.rpm, currentThrottle(), dt.onLimiter, car.speedKmh);
     },

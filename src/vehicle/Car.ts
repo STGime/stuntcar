@@ -418,12 +418,29 @@ export class Car {
     }
   }
 
-  /** Scale all four wheels' frictionSlip by `factor`. < 1 makes the car
-   *  slide in corners (used by the rain weather preset). */
+  /** Weather grip multiplier (defaults to 1). Rain / snow use this. */
+  private weatherGripMult = 1;
+  /** Powerup grip multiplier (defaults to 1). Sticky-tire pickup boosts,
+   *  oil-slick hazard reduces. Composed with `weatherGripMult` so the two
+   *  don't overwrite each other. */
+  private powerupGripMult = 1;
+
+  /** Scale all four wheels' frictionSlip by the active weather factor. */
   setGripFactor(factor: number): void {
-    const base = this.profile.frictionSlip;
+    this.weatherGripMult = factor;
+    this.applyGrip();
+  }
+
+  /** Scale all four wheels' frictionSlip by an additional powerup factor. */
+  setPowerupGripFactor(factor: number): void {
+    this.powerupGripMult = factor;
+    this.applyGrip();
+  }
+
+  private applyGrip(): void {
+    const eff = this.profile.frictionSlip * this.weatherGripMult * this.powerupGripMult;
     for (let i = 0; i < CarConfig.wheels.length; i++) {
-      this.controller.setWheelFrictionSlip(i, base * factor);
+      this.controller.setWheelFrictionSlip(i, eff);
     }
   }
 
