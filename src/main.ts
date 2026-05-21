@@ -91,10 +91,13 @@ function armFullscreenOnFirstTap(): void {
         pending = false;
       });
   };
-  // Capture phase so we run before any child handler that might preventDefault
-  // can do anything weird; not one-shot, because navigations drop fullscreen
-  // and the next tap should re-request.
-  window.addEventListener('pointerdown', tryEnter, { capture: true });
+  // Bubble phase + passive: iOS Safari treats a capture-phase listener
+  // that calls requestFullscreen as if it interrupts the user-gesture
+  // delivery chain, which in turn breaks the steering pad's
+  // pointerdown → setPointerCapture → pointermove sequence on the same
+  // tap. Letting child handlers run first and us trying fullscreen
+  // afterwards leaves all the gameplay touch handling intact.
+  window.addEventListener('pointerdown', tryEnter, { passive: true });
 }
 
 async function main(): Promise<void> {
