@@ -291,8 +291,14 @@ function injectStyles(): void {
       position: fixed;
       inset: 0;
       display: flex;
-      align-items: center;
+      align-items: safe center;
       justify-content: center;
+      padding: 24px 16px;
+      box-sizing: border-box;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+      overscroll-behavior: contain;
       background: linear-gradient(135deg, #1a2030 0%, #232b3f 100%);
       color: #e8edf6;
       font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;

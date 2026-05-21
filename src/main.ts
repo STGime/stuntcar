@@ -57,6 +57,27 @@ function gotoRetry(): void {
   location.reload();
 }
 
+// First user tap → request fullscreen + landscape lock. Both fail
+// silently on browsers that don't support them. Wired up on every
+// screen (menu, track-select, game) so the URL bar hides as soon as
+// the player interacts.
+function armFullscreenOnFirstTap(): void {
+  const tryLockOrientation = (): void => {
+    const docEl = document.documentElement as HTMLElement & {
+      requestFullscreen?: () => Promise<void>;
+    };
+    const screenOri = (screen as unknown as {
+      orientation?: { lock?: (o: string) => Promise<void> };
+    }).orientation;
+    docEl
+      .requestFullscreen?.()
+      .then(() => screenOri?.lock?.('landscape'))
+      .catch(() => undefined);
+    window.removeEventListener('pointerdown', tryLockOrientation);
+  };
+  window.addEventListener('pointerdown', tryLockOrientation);
+}
+
 async function main(): Promise<void> {
   const container = document.getElementById('app');
   if (!container) throw new Error('Missing #app in index.html');
@@ -71,6 +92,7 @@ async function main(): Promise<void> {
     new OrientationPrompt(document.body);
     const hints = document.getElementById('overlay');
     if (hints) hints.style.display = 'none';
+    armFullscreenOnFirstTap();
   }
 
   // Screen routing: no ?track param → show menu/track-select screen.
@@ -356,22 +378,7 @@ async function main(): Promise<void> {
       },
     });
 
-    // First user tap → request fullscreen + landscape lock. Both fail
-    // silently on browsers that don't support them.
-    const tryLockOrientation = (): void => {
-      const docEl = document.documentElement as HTMLElement & {
-        requestFullscreen?: () => Promise<void>;
-      };
-      const screenOri = (screen as unknown as {
-        orientation?: { lock?: (o: string) => Promise<void> };
-      }).orientation;
-      docEl
-        .requestFullscreen?.()
-        .then(() => screenOri?.lock?.('landscape'))
-        .catch(() => undefined);
-      window.removeEventListener('pointerdown', tryLockOrientation);
-    };
-    window.addEventListener('pointerdown', tryLockOrientation);
+    armFullscreenOnFirstTap();
   }
 
   const currentThrottle = (): number => {
