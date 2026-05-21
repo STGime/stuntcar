@@ -31,20 +31,25 @@ export class EngineSound {
   private evOsc2: OscillatorNode | null = null;
   private evFilter: BiquadFilterNode | null = null;
   private evGain: GainNode | null = null;
-  private currentEvGain = 0;
+  private currentEvGain = 0.001;
   private profile: SoundProfile = 'combustion';
   // Wind layer — pink-ish noise buffer through a lowpass, volume scales
   // with speed² so it's silent at idle and a clear whoosh above ~60 km/h.
   private windSource: AudioBufferSourceNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private windGain: GainNode | null = null;
-  private currentWindGain = 0;
+  private currentWindGain = 0.001;
   private started = false;
   private muted = false;
 
   private currentRpm: number = CarConfig.idleRpm;
   private targetThrottleGain = 0.0;
-  private currentGain = 0.0;
+  // Seeded to combustion idle (matches `0.18 + 0*0.55` in update()) so the
+  // gain AudioParam can start at a real audible value at gesture time,
+  // without being immediately yanked back down by JS-side smoothing on the
+  // first update() call. iOS WebKit only keeps a continuous audio path
+  // alive if it produced non-zero samples inside the user-gesture window.
+  private currentGain = 0.18;
   private limiterPhase = 0;
   private currentSpeedKmh = 0;
 
@@ -62,6 +67,15 @@ export class EngineSound {
     // Firefox and mobile Chrome create new contexts in 'suspended' state;
     // without an explicit resume() the oscillators never produce sound.
     this.ctx.resume();
+
+    // Seed JS-side smoothed gains to match the initial AudioParam values
+    // we're about to set on the graph, so the first update() doesn't drag
+    // the gain back toward zero on the next frame (which would cause an
+    // audible dip-and-rise in combustion, or a stray combustion blip on
+    // EV start).
+    this.currentGain = this.profile === 'combustion' ? 0.18 : 0;
+    this.currentEvGain = 0;
+    this.currentWindGain = 0;
 
     this.oscPrimary = this.ctx.createOscillator();
     this.oscPrimary.type = 'sawtooth';
@@ -83,7 +97,11 @@ export class EngineSound {
     primaryGain.gain.value = 0.5;
 
     this.gain = this.ctx.createGain();
-    this.gain.gain.value = 0.0;
+    // Start at the combustion idle target IF this is a combustion car —
+    // gives the engine path real audible samples during the user-gesture
+    // window so iOS WebKit commits the audio path. For an EV, keep it
+    // sub-audible (we don't want a 100 ms combustion blip on EV start).
+    this.gain.gain.value = this.profile === 'combustion' ? 0.18 : 0.001;
 
     this.oscPrimary.connect(primaryGain).connect(this.filter);
     this.oscOctave.connect(octaveGain).connect(this.filter);
@@ -108,7 +126,10 @@ export class EngineSound {
     this.evFilter.frequency.value = 240;
     this.evFilter.Q.value = 3.5;
     this.evGain = this.ctx.createGain();
-    this.evGain.gain.value = 0;
+    // Same idea as the combustion gain — give the EV path real samples at
+    // gesture time when an EV is selected. Briefly audible whine, then
+    // update()'s speedGate ramps it to 0 over ~80 ms at standstill.
+    this.evGain.gain.value = this.profile === 'electric' ? 0.05 : 0.001;
     this.evOsc1.connect(evG1).connect(this.evFilter);
     this.evOsc2.connect(evG2).connect(this.evFilter);
     this.evFilter.connect(this.evGain).connect(this.ctx.destination);
@@ -130,9 +151,14 @@ export class EngineSound {
     this.windFilter.frequency.value = 380;
     this.windFilter.Q.value = 0.4;
     this.windGain = this.ctx.createGain();
-    this.windGain.gain.value = 0;
+    this.windGain.gain.value = 0.001;
     this.windSource.connect(this.windFilter).connect(this.windGain).connect(this.ctx.destination);
     this.windSource.start();
+
+    // Diagnostic hook for Safari Web Inspector over USB on iOS — lets the
+    // remote console read ctx.state / currentTime / gain values if the
+    // engine ever goes silent again.
+    (window as unknown as { __engineCtx?: AudioContext }).__engineCtx = this.ctx;
   }
 
   setMuted(muted: boolean): void {
