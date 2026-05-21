@@ -9,6 +9,22 @@
  * Audio needs a user gesture to start. The same gesture that starts
  * `EngineSound` resumes the context for Sfx too.
  */
+
+/** iOS Safari/Chrome quirk: a new AudioContext is "unlocked" only after
+ *  a buffer-source has been played from inside a user gesture. Without
+ *  this, the context resumes but outputs silence. */
+export function iosUnlock(ctx: AudioContext): void {
+  try {
+    const buf = ctx.createBuffer(1, 1, 22050);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0);
+  } catch {
+    /* nothing we can do */
+  }
+}
+
 export class Sfx {
   private ctx: AudioContext | null = null;
   // Sustained tire-screech graph (built once on `start`).
@@ -27,6 +43,7 @@ export class Sfx {
       this.masterGain.gain.value = this.muted ? 0 : 1;
       this.masterGain.connect(this.ctx.destination);
       this.buildScreech();
+      iosUnlock(this.ctx);
     }
     // Always try to resume — modern browsers create contexts in 'suspended'
     // state when not under an interactive gesture chain.

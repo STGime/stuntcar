@@ -1,4 +1,5 @@
 import { CarConfig } from '../vehicle/CarConfig';
+import { iosUnlock } from './Sfx';
 
 export type SoundProfile = 'combustion' | 'electric';
 
@@ -62,6 +63,9 @@ export class EngineSound {
     // Firefox and mobile Chrome create new contexts in 'suspended' state;
     // without an explicit resume() the oscillators never produce sound.
     this.ctx.resume();
+    // iOS Safari/Chrome also need a buffer-source played from inside the
+    // gesture before they'll actually output sound.
+    iosUnlock(this.ctx);
 
     this.oscPrimary = this.ctx.createOscillator();
     this.oscPrimary.type = 'sawtooth';
