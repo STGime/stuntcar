@@ -1344,6 +1344,18 @@ function injectStyles(): void {
       color: #ff4f4f;
       text-shadow: 0 0 18px rgba(255, 79, 79, 0.55);
     }
+
+    /* Mobile / touch in landscape: the dashboard at native size eats
+       most of the screen. Scale the whole #hud down and pull it closer
+       to the bottom; transform-origin keeps it anchored where it sits. */
+    @media (pointer: coarse) and (max-height: 500px) {
+      #hud {
+        transform: translateX(-50%) scale(0.5);
+        transform-origin: bottom center;
+        bottom: 0;
+      }
+      #race-bar { transform: translateX(-50%) scale(0.8); transform-origin: top center; }
+    }
   `;
   const style = document.createElement('style');
   style.textContent = css;
