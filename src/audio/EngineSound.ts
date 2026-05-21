@@ -3,50 +3,68 @@ import { CarConfig } from '../vehicle/CarConfig';
 export type SoundProfile = 'combustion' | 'electric';
 
 /**
- * Procedural drivetrain sound. Two parallel graphs are built once on
- * `start()`:
+ * Procedural drivetrain sound.
  *
- *   - **combustion**: two detuned saw/square oscillators → lowpass filter,
- *     pitched by RPM (rpm/30 = 4-stroke firing rate). Wobbles on the rev
- *     limiter. The original gas-car drone.
- *   - **electric**: two detuned saws → tight bandpass filter, pitched
- *     `220 + speedKmh * 8` Hz so the whine rises with road speed. Idle is
- *     silent (no whine at standstill, like a real EV).
+ * Two implementations live in this class, picked at start() time:
  *
- * Both share the wind/road-rumble layer below. `setProfile('electric')`
- * mutes one graph's master and unmutes the other.
+ *   - **AudioWorklet path** (`public/engine-processor.js`): synthesises
+ *     saw + square + bandpass + lowpass entirely inside the audio thread.
+ *     Emits non-zero samples every render block, which is what keeps iOS
+ *     WebKit's audio renderer engaged. Preferred whenever AudioWorklet
+ *     is available and the module loads.
  *
- * The browser requires a user gesture to start audio, so call `start()` from
- * a key/click handler.
+ *   - **OscillatorNode fallback**: the original BiquadFilter +
+ *     OscillatorNode graph. Used when AudioWorklet is unavailable or
+ *     `addModule` fails. Known to work on every browser EXCEPT iOS
+ *     Safari/Chrome, where its master-gain-of-0-at-gesture-time pattern
+ *     leaves the audio path parked.
+ *
+ * Both paths expose the same public API (start, setMuted, toggleMute,
+ * setProfile, update, rpm). The Car layer doesn't know which is running.
+ *
+ * The browser requires a user gesture to start audio, so call `start()`
+ * from a key/click handler.
  */
 export class EngineSound {
   private ctx: AudioContext | null = null;
-  // ── Combustion graph ──────────────────────────────────────────────────
+
+  // ── Worklet path ──────────────────────────────────────────────────────
+  private worklet: AudioWorkletNode | null = null;
+  private workletParams: {
+    combGain: AudioParam;
+    evGain: AudioParam;
+    windGain: AudioParam;
+    combHz: AudioParam;
+    combCutoff: AudioParam;
+    evHz: AudioParam;
+    evCutoff: AudioParam;
+    windCutoff: AudioParam;
+  } | null = null;
+
+  // ── OscillatorNode fallback ──────────────────────────────────────────
   private oscPrimary: OscillatorNode | null = null;
   private oscOctave: OscillatorNode | null = null;
   private filter: BiquadFilterNode | null = null;
   private gain: GainNode | null = null;
-  // ── Electric graph ────────────────────────────────────────────────────
   private evOsc1: OscillatorNode | null = null;
   private evOsc2: OscillatorNode | null = null;
   private evFilter: BiquadFilterNode | null = null;
   private evGain: GainNode | null = null;
-  private currentEvGain = 0;
-  private profile: SoundProfile = 'combustion';
-  // Wind layer — pink-ish noise buffer through a lowpass, volume scales
-  // with speed² so it's silent at idle and a clear whoosh above ~60 km/h.
   private windSource: AudioBufferSourceNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private windGain: GainNode | null = null;
-  private currentWindGain = 0;
+
+  private profile: SoundProfile = 'combustion';
   private started = false;
   private muted = false;
 
+  // Per-frame smoothed state (shared between worklet + fallback paths).
   private currentRpm: number = CarConfig.idleRpm;
-  private targetThrottleGain = 0.0;
-  private currentGain = 0.0;
-  private limiterPhase = 0;
   private currentSpeedKmh = 0;
+  private currentGain = 0.0;
+  private currentEvGain = 0;
+  private currentWindGain = 0;
+  private limiterPhase = 0;
 
   /** Resume / create the audio context. Must be called from a user gesture. */
   start(): void {
@@ -62,6 +80,43 @@ export class EngineSound {
     // Firefox and mobile Chrome create new contexts in 'suspended' state;
     // without an explicit resume() the oscillators never produce sound.
     this.ctx.resume();
+
+    // Try the worklet path; fall back to oscillators if it isn't available
+    // or fails to load. addModule is async, so update() will simply no-op
+    // on the worklet branch until the node is ready — the JS-side smoothing
+    // fields keep tracking targets in the meantime.
+    void this.tryStartWorklet().catch(() => {
+      this.startOscillators();
+    });
+  }
+
+  private async tryStartWorklet(): Promise<void> {
+    if (!this.ctx?.audioWorklet) throw new Error('AudioWorklet not supported');
+    await this.ctx.audioWorklet.addModule('/engine-processor.js');
+    if (!this.ctx) return; // disposed during await
+    const node = new AudioWorkletNode(this.ctx, 'engine-processor');
+    const p = node.parameters as Map<string, AudioParam>;
+    const need = (name: string): AudioParam => {
+      const ap = p.get(name);
+      if (!ap) throw new Error(`Missing worklet param ${name}`);
+      return ap;
+    };
+    this.workletParams = {
+      combGain: need('combGain'),
+      evGain: need('evGain'),
+      windGain: need('windGain'),
+      combHz: need('combHz'),
+      combCutoff: need('combCutoff'),
+      evHz: need('evHz'),
+      evCutoff: need('evCutoff'),
+      windCutoff: need('windCutoff'),
+    };
+    node.connect(this.ctx.destination);
+    this.worklet = node;
+  }
+
+  private startOscillators(): void {
+    if (!this.ctx) return;
 
     this.oscPrimary = this.ctx.createOscillator();
     this.oscPrimary.type = 'sawtooth';
@@ -98,7 +153,7 @@ export class EngineSound {
     this.evOsc1.frequency.value = 220;
     this.evOsc2 = this.ctx.createOscillator();
     this.evOsc2.type = 'sawtooth';
-    this.evOsc2.frequency.value = 220 * 2.02; // detuned octave
+    this.evOsc2.frequency.value = 220 * 2.02;
     const evG1 = this.ctx.createGain();
     evG1.gain.value = 0.42;
     const evG2 = this.ctx.createGain();
@@ -116,8 +171,6 @@ export class EngineSound {
     this.evOsc2.start();
 
     // ── Wind layer ──────────────────────────────────────────────────────
-    // 2 s buffer of white noise looped. The lowpass shapes it toward a
-    // wind/rumble timbre; gain follows speed (set per frame in update()).
     const sampleRate = this.ctx.sampleRate;
     const windBuffer = this.ctx.createBuffer(1, sampleRate * 2, sampleRate);
     const data = windBuffer.getChannelData(0);
@@ -144,8 +197,8 @@ export class EngineSound {
     return this.muted;
   }
 
-  /** Switch between combustion and electric sound. The unused graph's
-   *  master gain ramps to zero so we don't hear two engines at once. */
+  /** Switch between combustion and electric sound. The unused profile's
+   *  gain ramps to zero so we don't hear two engines at once. */
   setProfile(profile: SoundProfile): void {
     this.profile = profile;
   }
@@ -160,65 +213,74 @@ export class EngineSound {
   ): void {
     this.currentRpm = rpm;
     this.currentSpeedKmh = speedKmh;
+    if (!this.ctx) return;
+
     // Sound louder under load, quieter while coasting; never dead silent
     // because the idle should always be audible.
-    this.targetThrottleGain = 0.18 + throttle * 0.55;
-
-    if (!this.ctx || !this.oscPrimary || !this.oscOctave || !this.filter || !this.gain) return;
+    const targetThrottleGain = 0.18 + throttle * 0.55;
 
     let baseHz = rpmToHz(rpm);
-
-    // Rev-limiter wobble: oscillate the frequency by a few percent at ~14 Hz
-    // for the classic "bouncing off the limiter" sound.
+    // Rev-limiter wobble.
     if (onLimiter) {
       this.limiterPhase += dt * 14 * Math.PI * 2;
       baseHz *= 1 + Math.sin(this.limiterPhase) * 0.04;
     } else {
       this.limiterPhase = 0;
     }
+    // Open the filter as revs rise.
+    const cutoff = 500 + (rpm / CarConfig.redlineRpm) * 1800;
+
+    // Combustion master gain: JS-side smoothing.
+    const combustionTarget =
+      this.muted || this.profile !== 'combustion' ? 0 : targetThrottleGain;
+    this.currentGain += (combustionTarget - this.currentGain) * Math.min(1, dt * 6);
+
+    // EV motor whine: pitch = 220 + speedKmh*8.
+    const evHz = 220 + Math.max(0, this.currentSpeedKmh) * 8;
+    const speedGate = Math.min(1, Math.max(0, this.currentSpeedKmh - 2) / 30);
+    const evTarget =
+      this.muted || this.profile !== 'electric'
+        ? 0
+        : (0.10 + throttle * 0.32) * speedGate;
+    this.currentEvGain += (evTarget - this.currentEvGain) * Math.min(1, dt * 5);
+
+    // Wind layer — silent at idle, audible ~60 km/h, loud past ~150 km/h.
+    const speedRef = Math.max(0, this.currentSpeedKmh) / 100;
+    const windTarget = this.muted ? 0 : Math.min(0.32, speedRef * speedRef * 0.45);
+    this.currentWindGain += (windTarget - this.currentWindGain) * Math.min(1, dt * 4);
+    const windCutoff = 300 + Math.min(900, speedRef * 600);
 
     const now = this.ctx.currentTime;
-    // Use setTargetAtTime for smooth (artefact-free) parameter changes.
-    this.oscPrimary.frequency.setTargetAtTime(baseHz, now, 0.02);
-    this.oscOctave.frequency.setTargetAtTime(baseHz * 2, now, 0.02);
 
-    // Open the filter as revs rise — gives a brighter "high RPM" timbre.
-    const cutoff = 500 + (rpm / CarConfig.redlineRpm) * 1800;
-    this.filter.frequency.setTargetAtTime(cutoff, now, 0.05);
+    if (this.workletParams) {
+      // Worklet path: all params live on a single AudioWorkletNode.
+      const p = this.workletParams;
+      p.combHz.setTargetAtTime(baseHz, now, 0.02);
+      p.combCutoff.setTargetAtTime(cutoff, now, 0.05);
+      p.combGain.setTargetAtTime(this.currentGain, now, 0.03);
+      p.evHz.setTargetAtTime(evHz, now, 0.04);
+      p.evCutoff.setTargetAtTime(evHz, now, 0.04);
+      p.evGain.setTargetAtTime(this.currentEvGain, now, 0.04);
+      p.windCutoff.setTargetAtTime(windCutoff, now, 0.1);
+      p.windGain.setTargetAtTime(this.currentWindGain, now, 0.05);
+      return;
+    }
 
-    // Smooth master gain toward target. The INACTIVE profile's gain ramps
-    // toward zero, the ACTIVE one toward its throttle-weighted target.
-    const combustionTarget =
-      this.muted || this.profile !== 'combustion' ? 0 : this.targetThrottleGain;
-    this.currentGain += (combustionTarget - this.currentGain) * Math.min(1, dt * 6);
-    this.gain.gain.setTargetAtTime(this.currentGain, now, 0.03);
-
-    // EV motor whine: pitch = 220 + speedKmh*8, gain swells with throttle
-    // but stays audible while coasting. Silent at standstill.
+    // OscillatorNode fallback path.
+    if (this.oscPrimary && this.oscOctave && this.filter && this.gain) {
+      this.oscPrimary.frequency.setTargetAtTime(baseHz, now, 0.02);
+      this.oscOctave.frequency.setTargetAtTime(baseHz * 2, now, 0.02);
+      this.filter.frequency.setTargetAtTime(cutoff, now, 0.05);
+      this.gain.gain.setTargetAtTime(this.currentGain, now, 0.03);
+    }
     if (this.evOsc1 && this.evOsc2 && this.evFilter && this.evGain) {
-      const evHz = 220 + Math.max(0, this.currentSpeedKmh) * 8;
       this.evOsc1.frequency.setTargetAtTime(evHz, now, 0.04);
       this.evOsc2.frequency.setTargetAtTime(evHz * 2.02, now, 0.04);
       this.evFilter.frequency.setTargetAtTime(evHz, now, 0.04);
-      // Throttle-weighted; speed-gated so the whine starts only once the
-      // car is moving (real EVs are silent at standstill).
-      const speedGate = Math.min(1, Math.max(0, this.currentSpeedKmh - 2) / 30);
-      const evTarget =
-        this.muted || this.profile !== 'electric'
-          ? 0
-          : (0.10 + throttle * 0.32) * speedGate;
-      this.currentEvGain += (evTarget - this.currentEvGain) * Math.min(1, dt * 5);
       this.evGain.gain.setTargetAtTime(this.currentEvGain, now, 0.04);
     }
-
-    // Wind layer — silent at idle, audible ~60 km/h, loud past ~150 km/h.
     if (this.windGain && this.windFilter) {
-      const speedRef = Math.max(0, this.currentSpeedKmh) / 100;
-      const windTarget = this.muted ? 0 : Math.min(0.32, speedRef * speedRef * 0.45);
-      this.currentWindGain += (windTarget - this.currentWindGain) * Math.min(1, dt * 4);
       this.windGain.gain.setTargetAtTime(this.currentWindGain, now, 0.05);
-      // Cutoff opens a bit with speed for a brighter rush of air.
-      const windCutoff = 300 + Math.min(900, speedRef * 600);
       this.windFilter.frequency.setTargetAtTime(windCutoff, now, 0.1);
     }
   }
