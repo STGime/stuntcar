@@ -57,25 +57,44 @@ function gotoRetry(): void {
   location.reload();
 }
 
-// First user tap → request fullscreen + landscape lock. Both fail
-// silently on browsers that don't support them. Wired up on every
-// screen (menu, track-select, game) so the URL bar hides as soon as
-// the player interacts.
+// Any user tap on a touch device → request fullscreen + landscape lock.
+// We can't make this a one-shot: each page navigation (menu → tracks →
+// game) drops fullscreen, and the gesture that fires the navigation is
+// consumed by it. Instead, every tap retries until we're actually
+// fullscreen, and we re-arm whenever we exit (e.g. after a navigation).
 function armFullscreenOnFirstTap(): void {
-  const tryLockOrientation = (): void => {
+  let pending = false;
+  const isFullscreen = (): boolean =>
+    !!(
+      document.fullscreenElement ??
+      (document as unknown as { webkitFullscreenElement?: Element })
+        .webkitFullscreenElement
+    );
+  const tryEnter = (): void => {
+    if (pending || isFullscreen()) return;
+    pending = true;
     const docEl = document.documentElement as HTMLElement & {
       requestFullscreen?: () => Promise<void>;
+      webkitRequestFullscreen?: () => Promise<void>;
     };
     const screenOri = (screen as unknown as {
       orientation?: { lock?: (o: string) => Promise<void> };
     }).orientation;
-    docEl
-      .requestFullscreen?.()
+    const req =
+      docEl.requestFullscreen?.() ??
+      docEl.webkitRequestFullscreen?.() ??
+      Promise.reject(new Error('unsupported'));
+    req
       .then(() => screenOri?.lock?.('landscape'))
-      .catch(() => undefined);
-    window.removeEventListener('pointerdown', tryLockOrientation);
+      .catch(() => undefined)
+      .finally(() => {
+        pending = false;
+      });
   };
-  window.addEventListener('pointerdown', tryLockOrientation);
+  // Capture phase so we run before any child handler that might preventDefault
+  // can do anything weird; not one-shot, because navigations drop fullscreen
+  // and the next tap should re-request.
+  window.addEventListener('pointerdown', tryEnter, { capture: true });
 }
 
 async function main(): Promise<void> {

@@ -132,6 +132,9 @@ function injectStyles(): void {
       padding: 6px;
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
     }
+    @media (pointer: coarse) and (max-height: 500px) {
+      #minimap { display: none; }
+    }
     .mm-bg { fill: rgba(255, 255, 255, 0.02); }
     .mm-track-shadow {
       fill: none;
