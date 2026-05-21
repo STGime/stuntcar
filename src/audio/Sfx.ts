@@ -28,6 +28,20 @@ export class Sfx {
       this.masterGain.gain.value = this.muted ? 0 : 1;
       this.masterGain.connect(this.ctx.destination);
       this.buildScreech();
+      // Release the context on page navigation so we don't leak one per
+      // race against iOS Safari's per-tab AudioContext quota.
+      const ctx = this.ctx;
+      window.addEventListener(
+        'pagehide',
+        () => {
+          try {
+            void ctx.close();
+          } catch {
+            /* already closing or closed */
+          }
+        },
+        { once: true },
+      );
     }
     // Always try to resume — modern browsers create contexts in 'suspended'
     // state when not under an interactive gesture chain.

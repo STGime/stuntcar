@@ -87,6 +87,25 @@ export class EngineSound {
     // without an explicit resume() the oscillators never produce sound.
     this.ctx.resume();
 
+    // Release the audio resources back to the browser when the page is
+    // about to navigate. Without this we leak an AudioContext per play —
+    // iOS Safari caps the per-tab quota (~6) and silently fails the
+    // create on subsequent reloads, which then falls back to the
+    // OscillatorNode graph (silent on iOS). `pagehide` is more reliable
+    // than `beforeunload` for navigations.
+    const ctx = this.ctx;
+    window.addEventListener(
+      'pagehide',
+      () => {
+        try {
+          void ctx.close();
+        } catch {
+          /* already closing or closed */
+        }
+      },
+      { once: true },
+    );
+
     // Try the worklet path; fall back to oscillators if it isn't available
     // or fails to load. addModule is async, so update() will simply no-op
     // on the worklet branch until the node is ready — the JS-side smoothing
